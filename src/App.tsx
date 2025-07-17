@@ -181,7 +181,6 @@ function App() {
   return (
     <div className="app-container">
       <div className="header">
-        <h1>论文本地校验工具</h1>
         <div>
           <button className="button" onClick={openFile}>打开文件</button>
           <button 
@@ -191,6 +190,14 @@ function App() {
             style={{ marginLeft: '10px' }}
           >
             {isAnalyzing ? "分析中..." : "分析文本"}
+          </button>
+        </div>
+        <div>
+          <button 
+            className="button button-info" 
+            onClick={() => alert("论文本地校验工具 v1.0\n\n一个基于Tauri的论文本地校验工具，可以对导入的文本进行逐行校验，检测出文本中的错误并给出优化建议。\n\n支持中英文混合文本分析，自动识别语言。")}
+          >
+            关于软件
           </button>
         </div>
       </div>

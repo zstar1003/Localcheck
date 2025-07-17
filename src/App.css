@@ -22,30 +22,28 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  max-width: 1200px;
+  width: 100%;
   margin: 0 auto;
-  padding: 1rem;
+  padding: 0;
 }
 
 .header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 1rem 0;
+  padding: 0.8rem 1rem;
+  background-color: #f8f9fa;
   border-bottom: 1px solid #ddd;
-}
-
-.header h1 {
-  margin: 0;
-  font-size: 1.5rem;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 
 .main-content {
   display: flex;
   flex: 1;
   gap: 1rem;
-  margin-top: 1rem;
-  height: calc(100vh - 150px);
+  padding: 1rem;
+  height: calc(100vh - 60px);
+  background-color: #f6f8fa;
 }
 
 .editor-container {
@@ -53,17 +51,20 @@ body {
   display: flex;
   flex-direction: column;
   border: 1px solid #ddd;
-  border-radius: 4px;
+  border-radius: 8px;
   overflow: hidden;
+  background-color: #fff;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
 }
 
 .editor-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0.5rem 1rem;
-  background-color: #f0f0f0;
-  border-bottom: 1px solid #ddd;
+  padding: 0.7rem 1rem;
+  background-color: #f8f9fa;
+  border-bottom: 1px solid #eaeaea;
+  font-weight: 500;
 }
 
 .editor-content {
@@ -92,17 +93,19 @@ body {
 .results-container {
   width: 350px;
   border: 1px solid #ddd;
-  border-radius: 4px;
+  border-radius: 8px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  background-color: #fff;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
 }
 
 .results-header {
-  padding: 0.5rem 1rem;
-  background-color: #f0f0f0;
-  border-bottom: 1px solid #ddd;
-  font-weight: bold;
+  padding: 0.7rem 1rem;
+  background-color: #f8f9fa;
+  border-bottom: 1px solid #eaeaea;
+  font-weight: 500;
 }
 
 .results-content {
@@ -126,16 +129,19 @@ body {
 
 .issue-item {
   margin-bottom: 0.5rem;
-  padding: 0.5rem;
-  border-radius: 4px;
+  padding: 0.7rem;
+  border-radius: 6px;
   border-left: 3px solid #ff6b6b;
   background-color: #fff;
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
 .issue-item:hover {
-  background-color: #f0f0f0;
+  background-color: #f8f9fa;
+  transform: translateY(-1px);
+  box-shadow: 0 3px 5px rgba(0, 0, 0, 0.08);
 }
 
 .issue-header {
@@ -228,6 +234,14 @@ body {
   background-color: #5a6268;
 }
 
+.button-info {
+  background-color: #17a2b8;
+}
+
+.button-info:hover {
+  background-color: #138496;
+}
+
 .language-selector {
   margin-left: 1rem;
   padding: 0.25rem 0.5rem;
@@ -243,35 +257,58 @@ body {
 @media (prefers-color-scheme: dark) {
   :root {
     color: #f6f6f6;
-    background-color: #2f2f2f;
+    background-color: #1a1a1a;
+  }
+
+  .header {
+    background-color: #252525;
+    border-color: #333;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  }
+
+  .main-content {
+    background-color: #1a1a1a;
   }
 
   .editor-container, .results-container {
-    border-color: #444;
+    border-color: #333;
+    background-color: #252525;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
   }
 
   .editor-header, .results-header {
-    background-color: #333;
-    border-color: #444;
+    background-color: #2c2c2c;
+    border-color: #333;
   }
 
   .editor-textarea, .stats-container {
-    background-color: #222;
+    background-color: #252525;
     color: #f6f6f6;
   }
 
+  .stats-container {
+    background-color: #2c2c2c;
+  }
+
   .issue-item {
-    background-color: #333;
+    background-color: #2c2c2c;
     border-left-color: #ff6b6b;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
   }
 
   .issue-item:hover {
-    background-color: #444;
+    background-color: #333;
+    box-shadow: 0 3px 5px rgba(0, 0, 0, 0.3);
+  }
+
+  .issue-location {
+    color: #aaa;
   }
 
   .tooltip {
-    background-color: #333;
+    background-color: #2c2c2c;
     border-color: #444;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   }
 
   .button {
@@ -283,11 +320,23 @@ body {
     background-color: #1a68d1;
   }
 
+  .button-info {
+    background-color: #17a2b8;
+  }
+
+  .button-info:hover {
+    background-color: #138496;
+  }
+
   .highlighted-text {
     background-color: rgba(255, 107, 107, 0.3);
   }
 
   .highlighted-text:hover {
     background-color: rgba(255, 107, 107, 0.5);
+  }
+
+  .file-info {
+    color: #aaa;
   }
 }
