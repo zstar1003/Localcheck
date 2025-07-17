@@ -91,11 +91,24 @@ function App() {
     }
   };
 
+  // 用于存储防抖定时器ID
+  const debounceTimerRef = useRef<number | null>(null);
+
   // 处理文本变化
   const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setText(e.target.value);
-    // 清除之前的分析结果
-    setAnalysisResult(null);
+    // 不清除分析结果，保持显示
+    
+    // 设置防抖定时器，在用户停止输入1秒后自动重新分析
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    
+    debounceTimerRef.current = window.setTimeout(() => {
+      if (e.target.value.trim()) {
+        analyzeText();
+      }
+    }, 1000);
   };
 
   // 点击问题项，高亮对应文本
