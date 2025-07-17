@@ -20,7 +20,7 @@ interface AnalysisResult {
 function App() {
   const [text, setText] = useState<string>("");
   const [fileName, setFileName] = useState<string>("");
-  const [language, setLanguage] = useState<string>("zh");
+  // 自动检测语言，不再需要语言选择器
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
   const [selectedIssue, setSelectedIssue] = useState<TextIssue | null>(null);
@@ -48,9 +48,9 @@ function App() {
     setIsAnalyzing(true);
     try {
       console.log("Analyzing text:", text.substring(0, 50) + "...");
-      console.log("Language:", language);
       
-      const result = await invoke<AnalysisResult>("analyze_text", { text, language });
+      // 不再需要传递language参数，后端会自动检测
+      const result = await invoke<AnalysisResult>("analyze_text", { text });
       console.log("Analysis result:", result);
       setAnalysisResult(result);
     } catch (error) {
@@ -103,26 +103,41 @@ function App() {
     setSelectedIssue(issue);
     
     if (textareaRef.current) {
-      // 计算行的位置
-      const lines = text.split("\n");
-      let position = 0;
-      
-      for (let i = 0; i < issue.line_number - 1; i++) {
-        position += lines[i].length + 1; // +1 for newline character
-      }
-      
-      // 设置选择范围
-      const start = position + issue.start;
-      const end = position + issue.end;
-      
-      textareaRef.current.focus();
-      textareaRef.current.setSelectionRange(start, end);
-      
-      // 滚动到可见区域
-      const lineHeight = 24; // 估计的行高
-      const scrollTop = (issue.line_number - 1) * lineHeight - 100;
-      if (editorRef.current) {
-        editorRef.current.scrollTop = scrollTop > 0 ? scrollTop : 0;
+      try {
+        // 计算行的位置
+        const lines = text.split("\n");
+        
+        // 确保行号在有效范围内
+        const lineIndex = Math.min(issue.line_number - 1, lines.length - 1);
+        const line = lines[lineIndex];
+        
+        // 计算行的起始位置（字符偏移量）
+        let position = 0;
+        for (let i = 0; i < lineIndex; i++) {
+          position += lines[i].length + 1; // +1 for newline character
+        }
+        
+        // 确保起始和结束位置在有效范围内
+        const start = position + Math.min(issue.start, line.length);
+        const end = position + Math.min(issue.end, line.length);
+        
+        console.log(`Highlighting issue: Line ${issue.line_number}, Start: ${issue.start}, End: ${issue.end}`);
+        console.log(`Text position: Start: ${start}, End: ${end}`);
+        console.log(`Line content: "${line}"`);
+        console.log(`Highlighted text: "${text.substring(start, end)}"`);
+        
+        // 设置选择范围
+        textareaRef.current.focus();
+        textareaRef.current.setSelectionRange(start, end);
+        
+        // 滚动到可见区域
+        const lineHeight = 24; // 估计的行高
+        const scrollTop = lineIndex * lineHeight - 100;
+        if (editorRef.current) {
+          editorRef.current.scrollTop = scrollTop > 0 ? scrollTop : 0;
+        }
+      } catch (error) {
+        console.error("高亮文本时出错:", error);
       }
     }
   };
@@ -155,14 +170,6 @@ function App() {
       <div className="header">
         <h1>论文本地校验工具</h1>
         <div>
-          <select 
-            className="language-selector" 
-            value={language}
-            onChange={(e) => setLanguage(e.target.value)}
-          >
-            <option value="zh">中文</option>
-            <option value="en">英文</option>
-          </select>
           <button className="button" onClick={openFile}>打开文件</button>
           <button 
             className="button" 

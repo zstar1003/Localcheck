@@ -12,6 +12,11 @@ pub struct TextIssue {
     suggestion: String,
 }
 
+// 将字节索引转换为字符索引
+fn byte_to_char_index(s: &str, byte_idx: usize) -> usize {
+    s[..byte_idx.min(s.len())].chars().count()
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AnalysisResult {
     issues: Vec<TextIssue>,
@@ -19,7 +24,7 @@ pub struct AnalysisResult {
 }
 
 #[tauri::command]
-fn analyze_text(text: &str, language: &str) -> AnalysisResult {
+fn analyze_text(text: &str) -> AnalysisResult {
     let mut issues = Vec::new();
     let mut stats = HashMap::new();
 
@@ -34,17 +39,8 @@ fn analyze_text(text: &str, language: &str) -> AnalysisResult {
 
     // 分析每一行
     for (line_idx, line) in text.lines().enumerate() {
-        // 检查行长度 - 只检查超过150个字符的行
-        if line.len() > 150 {
-            issues.push(TextIssue {
-                line_number: line_idx + 1,
-                start: 0,
-                end: line.len(),
-                issue_type: "长句".to_string(),
-                message: "这一行过长，可能影响阅读流畅度".to_string(),
-                suggestion: "考虑将长句拆分为多个短句".to_string(),
-            });
-        }
+        // 自动检测当前行的语言
+        let line_language = detect_language(line);
 
         // 检查重复词
         check_repeated_words(line, line_idx, &mut issues);
@@ -53,16 +49,16 @@ fn analyze_text(text: &str, language: &str) -> AnalysisResult {
         check_punctuation(line, line_idx, &mut issues);
 
         // 检查被动语态 (简化版)
-        check_passive_voice(line, line_idx, &mut issues, language);
+        check_passive_voice(line, line_idx, &mut issues, &line_language);
 
         // 检查冗余表达
-        check_redundant_expressions(line, line_idx, &mut issues, language);
+        check_redundant_expressions(line, line_idx, &mut issues, &line_language);
 
         // 检查常见错别字
-        check_common_typos(line, line_idx, &mut issues, language);
+        check_common_typos(line, line_idx, &mut issues, &line_language);
 
         // 检查语法问题
-        check_grammar_issues(line, line_idx, &mut issues, language);
+        check_grammar_issues(line, line_idx, &mut issues, &line_language);
     }
 
     AnalysisResult { issues, stats }
@@ -73,13 +69,28 @@ fn check_repeated_words(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>
 
     for i in 0..words.len().saturating_sub(1) {
         if words[i].len() > 3 && words[i] == words[i + 1] {
-            let start_pos = line.find(words[i]).unwrap_or(0);
-            let end_pos = start_pos + words[i].len() * 2 + 1; // 包括空格
+            // 查找第一个单词的位置
+            let first_word_pos = match line.find(words[i]) {
+                Some(pos) => pos,
+                None => continue, // 如果找不到单词，跳过这个检查
+            };
+
+            // 查找第二个单词的位置（从第一个单词之后开始查找）
+            let second_word_pos = match line[first_word_pos + words[i].len()..].find(words[i]) {
+                Some(pos) => first_word_pos + words[i].len() + pos,
+                None => continue, // 如果找不到第二个单词，跳过这个检查
+            };
+
+            // 确保两个单词之间只有空白字符
+            let between_text = &line[first_word_pos + words[i].len()..second_word_pos];
+            if !between_text.trim().is_empty() {
+                continue; // 如果两个单词之间有非空白字符，跳过这个检查
+            }
 
             issues.push(TextIssue {
                 line_number: line_idx + 1,
-                start: start_pos,
-                end: end_pos,
+                start: byte_to_char_index(line, first_word_pos),
+                end: byte_to_char_index(line, second_word_pos + words[i].len()),
                 issue_type: "重复词".to_string(),
                 message: format!("重复使用词语 '{}'", words[i]),
                 suggestion: format!("删除重复的 '{}'", words[i]),
@@ -109,8 +120,8 @@ fn check_punctuation(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
     if let Some(mat) = consecutive_punct_regex.find(line) {
         issues.push(TextIssue {
             line_number: line_idx + 1,
-            start: mat.start(),
-            end: mat.end(),
+            start: byte_to_char_index(line, mat.start()),
+            end: byte_to_char_index(line, mat.end()),
             issue_type: "连续标点".to_string(),
             message: "连续使用多个标点符号".to_string(),
             suggestion: "使用单个适当的标点符号".to_string(),
@@ -127,8 +138,8 @@ fn check_passive_voice(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>,
             if let Some(pos) = line.find(marker) {
                 issues.push(TextIssue {
                     line_number: line_idx + 1,
-                    start: pos,
-                    end: pos + marker.len(),
+                    start: byte_to_char_index(line, pos),
+                    end: byte_to_char_index(line, pos + marker.len()),
                     issue_type: "被动语态".to_string(),
                     message: "使用了被动语态".to_string(),
                     suggestion: "考虑使用主动语态以增强表达力".to_string(),
@@ -149,17 +160,17 @@ fn check_passive_voice(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>,
                 if let Some(next_word) = words_after.first() {
                     for suffix in past_participles {
                         if next_word.to_lowercase().ends_with(suffix) {
+                            let end_pos = pos
+                                + be_verb.len()
+                                + after_be.find(next_word).unwrap_or(0)
+                                + next_word.len();
                             issues.push(TextIssue {
                                 line_number: line_idx + 1,
-                                start: pos,
-                                end: pos
-                                    + be_verb.len()
-                                    + after_be.find(next_word).unwrap_or(0)
-                                    + next_word.len(),
-                                issue_type: "Passive Voice".to_string(),
-                                message: "Passive voice detected".to_string(),
-                                suggestion: "Consider using active voice for stronger writing"
-                                    .to_string(),
+                                start: byte_to_char_index(line, pos),
+                                end: byte_to_char_index(line, end_pos),
+                                issue_type: "被动语态".to_string(),
+                                message: "检测到被动语态".to_string(),
+                                suggestion: "考虑使用主动语态以增强表达力".to_string(),
                             });
                             break;
                         }
@@ -205,8 +216,8 @@ fn check_redundant_expressions(
         if let Some(pos) = line.to_lowercase().find(&phrase.to_lowercase()) {
             issues.push(TextIssue {
                 line_number: line_idx + 1,
-                start: pos,
-                end: pos + phrase.len(),
+                start: byte_to_char_index(line, pos),
+                end: byte_to_char_index(line, pos + phrase.len()),
                 issue_type: "冗余表达".to_string(),
                 message: format!("冗余表达: '{}'", phrase),
                 suggestion: suggestion.to_string(),
@@ -216,128 +227,41 @@ fn check_redundant_expressions(
 }
 
 fn check_common_typos(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>, language: &str) {
-    let typos: HashMap<&str, &str> = if language == "zh" {
-        [
-            ("的的", "的"),
-            ("了了", "了"),
-            ("是是", "是"),
-            ("地地", "地"),
-            ("得得", "得"),
-            ("不不", "不"),
-            ("和和", "和"),
-            ("中中", "中"),
-            ("有有", "有"),
-            ("这这", "这"),
-            ("那那", "那"),
-            ("就就", "就"),
-            ("在在", "在"),
-            ("我我", "我"),
-            ("你你", "你"),
-            ("他他", "他"),
-            ("她她", "她"),
-            ("它它", "它"),
-            ("们们", "们"),
-            ("为为", "为"),
-            ("以以", "以"),
-            ("于于", "于"),
-            ("对对", "对"),
-            ("能能", "能"),
-            ("会会", "会"),
-            ("年年", "年"),
-            ("月月", "月"),
-            ("日日", "日"),
-            ("时时", "时"),
-            ("分分", "分"),
-            ("秒秒", "秒"),
-            ("天天", "天"),
-            ("地地", "地"),
-            ("人人", "人"),
-            ("大大", "大"),
-            ("小小", "小"),
-            ("多多", "多"),
-            ("少少", "少"),
-            ("好好", "好"),
-            ("坏坏", "坏"),
-            ("高高", "高"),
-            ("低低", "低"),
-            ("长长", "长"),
-            ("短短", "短"),
-            ("粗粗", "粗"),
-            ("细细", "细"),
-            ("快快", "快"),
-            ("慢慢", "慢"),
-            ("新新", "新"),
-            ("旧旧", "旧"),
-            ("前前", "前"),
-            ("后后", "后"),
-            ("上上", "上"),
-            ("下下", "下"),
-            ("左左", "左"),
-            ("右右", "右"),
-            ("内内", "内"),
-            ("外外", "外"),
-            ("中中", "中"),
-            ("东东", "东"),
-            ("西西", "西"),
-            ("南南", "南"),
-            ("北北", "北"),
-            ("春春", "春"),
-            ("夏夏", "夏"),
-            ("秋秋", "秋"),
-            ("冬冬", "冬"),
-            ("红红", "红"),
-            ("黄黄", "黄"),
-            ("蓝蓝", "蓝"),
-            ("绿绿", "绿"),
-            ("黑黑", "黑"),
-            ("白白", "白"),
-            ("灰灰", "灰"),
-            ("紫紫", "紫"),
-            ("金金", "金"),
-            ("银银", "银"),
-            ("铜铜", "铜"),
-            ("铁铁", "铁"),
-            ("水水", "水"),
-            ("火火", "火"),
-            ("木木", "木"),
-            ("土土", "土"),
-            ("金金", "金"),
-            ("一一", "一"),
-            ("二二", "二"),
-            ("三三", "三"),
-            ("四四", "四"),
-            ("五五", "五"),
-            ("六六", "六"),
-            ("七七", "七"),
-            ("八八", "八"),
-            ("九九", "九"),
-            ("十十", "十"),
-            ("百百", "百"),
-            ("千千", "千"),
-            ("万万", "万"),
-            ("亿亿", "亿"),
-            ("零零", "零"),
-            ("壹壹", "壹"),
-            ("贰贰", "贰"),
-            ("叁叁", "叁"),
-            ("肆肆", "肆"),
-            ("伍伍", "伍"),
-            ("陆陆", "陆"),
-            ("柒柒", "柒"),
-            ("捌捌", "捌"),
-            ("玖玖", "玖"),
-            ("拾拾", "拾"),
-            ("佰佰", "佰"),
-            ("仟仟", "仟"),
-            ("萬萬", "萬"),
-            ("億億", "億"),
-            ("零零", "零"),
-        ]
-        .iter()
-        .cloned()
-        .collect()
+    // 中文重复字符检测
+    if language == "zh" {
+        // 检测连续重复的单字符
+        let chars: Vec<char> = line.chars().collect();
+        let mut i = 0;
+        while i < chars.len().saturating_sub(1) {
+            if chars[i] == chars[i + 1] && chars[i] >= '\u{4e00}' && chars[i] <= '\u{9fff}' {
+                // 是中文字符且连续重复
+
+                // 计算字符在原始字符串中的字节位置
+                let start_byte_pos = line.char_indices().nth(i).map(|(pos, _)| pos).unwrap_or(0);
+
+                let end_byte_pos = line
+                    .char_indices()
+                    .nth(i + 2)
+                    .map(|(pos, _)| pos)
+                    .unwrap_or_else(|| line.len());
+
+                issues.push(TextIssue {
+                    line_number: line_idx + 1,
+                    start: byte_to_char_index(line, start_byte_pos),
+                    end: byte_to_char_index(line, end_byte_pos),
+                    issue_type: "重复字符".to_string(),
+                    message: format!("重复字符: '{}{}'", chars[i], chars[i]),
+                    suggestion: format!("删除重复的 '{}'", chars[i]),
+                });
+
+                i += 2; // 跳过已检测的重复字符
+            } else {
+                i += 1;
+            }
+        }
     } else {
-        [
+        // 英文常见错别字检测
+        let typos: HashMap<&str, &str> = [
             ("teh", "the"),
             ("recieve", "receive"),
             ("wierd", "weird"),
@@ -377,176 +301,26 @@ fn check_common_typos(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>, 
             ("wether", "whether"),
             ("withhold", "withhold"),
             ("writting", "writing"),
-            ("acheive", "achieve"),
-            ("aquire", "acquire"),
-            ("apparant", "apparent"),
-            ("arguement", "argument"),
-            ("assasination", "assassination"),
-            ("basicly", "basically"),
-            ("begining", "beginning"),
-            ("beleive", "believe"),
-            ("buisness", "business"),
-            ("calender", "calendar"),
-            ("camoflage", "camouflage"),
-            ("catagory", "category"),
-            ("cemetary", "cemetery"),
-            ("changable", "changeable"),
-            ("cheif", "chief"),
-            ("collegue", "colleague"),
-            ("comming", "coming"),
-            ("commitee", "committee"),
-            ("completly", "completely"),
-            ("conceed", "concede"),
-            ("congradulate", "congratulate"),
-            ("consciencious", "conscientious"),
-            ("consious", "conscious"),
-            ("curiousity", "curiosity"),
-            ("definately", "definitely"),
-            ("desireable", "desirable"),
-            ("dissapear", "disappear"),
-            ("dissapoint", "disappoint"),
-            ("ecstacy", "ecstasy"),
-            ("embarass", "embarrass"),
-            ("enviroment", "environment"),
-            ("equiped", "equipped"),
-            ("exagerate", "exaggerate"),
-            ("excede", "exceed"),
-            ("existance", "existence"),
-            ("experiance", "experience"),
-            ("facinating", "fascinating"),
-            ("familar", "familiar"),
-            ("finaly", "finally"),
-            ("flourescent", "fluorescent"),
-            ("foriegn", "foreign"),
-            ("freind", "friend"),
-            ("fullfil", "fulfill"),
-            ("guage", "gauge"),
-            ("gaurd", "guard"),
-            ("happend", "happened"),
-            ("harras", "harass"),
-            ("heighth", "height"),
-            ("heirarchy", "hierarchy"),
-            ("humerous", "humorous"),
-            ("hygene", "hygiene"),
-            ("hypocracy", "hypocrisy"),
-            ("ignorence", "ignorance"),
-            ("immediatly", "immediately"),
-            ("incidently", "incidentally"),
-            ("independant", "independent"),
-            ("indispensible", "indispensable"),
-            ("innoculate", "inoculate"),
-            ("intellegent", "intelligent"),
-            ("jewelery", "jewelry"),
-            ("judgement", "judgment"),
-            ("knowlege", "knowledge"),
-            ("liason", "liaison"),
-            ("libary", "library"),
-            ("lisence", "license"),
-            ("maintenence", "maintenance"),
-            ("medeval", "medieval"),
-            ("momento", "memento"),
-            ("millenium", "millennium"),
-            ("miniscule", "minuscule"),
-            ("mischevious", "mischievous"),
-            ("misspell", "misspell"),
-            ("neccessary", "necessary"),
-            ("neice", "niece"),
-            ("nieghbor", "neighbor"),
-            ("noticable", "noticeable"),
-            ("occassion", "occasion"),
-            ("occurance", "occurrence"),
-            ("occured", "occurred"),
-            ("ommision", "omission"),
-            ("oppurtunity", "opportunity"),
-            ("outragous", "outrageous"),
-            ("parrallel", "parallel"),
-            ("parliment", "parliament"),
-            ("particurly", "particularly"),
-            ("pasttime", "pastime"),
-            ("percieve", "perceive"),
-            ("persistant", "persistent"),
-            ("personell", "personnel"),
-            ("persue", "pursue"),
-            ("posession", "possession"),
-            ("potatos", "potatoes"),
-            ("preceed", "precede"),
-            ("predjudice", "prejudice"),
-            ("presance", "presence"),
-            ("privelege", "privilege"),
-            ("probly", "probably"),
-            ("pronounciation", "pronunciation"),
-            ("prufe", "proof"),
-            ("publically", "publicly"),
-            ("quarentine", "quarantine"),
-            ("questionaire", "questionnaire"),
-            ("readible", "readable"),
-            ("realy", "really"),
-            ("recieve", "receive"),
-            ("recomend", "recommend"),
-            ("refered", "referred"),
-            ("referance", "reference"),
-            ("relevent", "relevant"),
-            ("religous", "religious"),
-            ("repitition", "repetition"),
-            ("restarant", "restaurant"),
-            ("rythm", "rhythm"),
-            ("sacrafice", "sacrifice"),
-            ("saftey", "safety"),
-            ("secratary", "secretary"),
-            ("seperate", "separate"),
-            ("shedule", "schedule"),
-            ("shoudl", "should"),
-            ("similer", "similar"),
-            ("sincerely", "sincerely"),
-            ("speach", "speech"),
-            ("succesful", "successful"),
-            ("supercede", "supersede"),
-            ("supposably", "supposedly"),
-            ("suprise", "surprise"),
-            ("temperture", "temperature"),
-            ("tendancy", "tendency"),
-            ("therefor", "therefore"),
-            ("threshhold", "threshold"),
-            ("tommorrow", "tomorrow"),
-            ("tounge", "tongue"),
-            ("truely", "truly"),
-            ("unforseen", "unforeseen"),
-            ("unfortunatly", "unfortunately"),
-            ("untill", "until"),
-            ("vacume", "vacuum"),
-            ("vehical", "vehicle"),
-            ("visious", "vicious"),
-            ("wether", "whether"),
-            ("wierd", "weird"),
-            ("wellcome", "welcome"),
-            ("whereever", "wherever"),
-            ("wich", "which"),
-            ("writting", "writing"),
         ]
         .iter()
         .cloned()
-        .collect()
-    };
+        .collect();
 
-    for (typo, correction) in typos {
-        // 使用正则表达式匹配整个单词
-        let pattern = if language == "zh" {
-            format!(r"{}", typo)
-        } else {
-            format!(r"\b{}\b", typo)
-        };
+        for (typo, correction) in typos {
+            // 使用正则表达式匹配整个单词
+            let pattern = format!(r"\b{}\b", typo);
+            let regex = Regex::new(&pattern).unwrap();
 
-        let regex = Regex::new(&pattern).unwrap();
-
-        for mat in regex.find_iter(line) {
-            issues.push(TextIssue {
-                line_number: line_idx + 1,
-                start: mat.start(),
-                end: mat.end(),
-                issue_type: "错别字".to_string(),
-                message: format!("可能的错别字: '{}'", typo),
-                suggestion: format!("建议修改为: '{}'", correction),
-            });
+            for mat in regex.find_iter(line) {
+                issues.push(TextIssue {
+                    line_number: line_idx + 1,
+                    start: byte_to_char_index(line, mat.start()),
+                    end: byte_to_char_index(line, mat.end()),
+                    issue_type: "拼写错误".to_string(),
+                    message: format!("可能的拼写错误: '{}'", typo),
+                    suggestion: format!("建议修改为: '{}'", correction),
+                });
+            }
         }
     }
 }
@@ -583,8 +357,8 @@ fn check_de_usage(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
     for mat in de_di_regex.find_iter(line) {
         issues.push(TextIssue {
             line_number: line_idx + 1,
-            start: mat.start() + 1,
-            end: mat.start() + 2,
+            start: byte_to_char_index(line, mat.start() + 1),
+            end: byte_to_char_index(line, mat.start() + 2),
             issue_type: "语法错误".to_string(),
             message: "形容词后接动词应使用'地'而非'的'".to_string(),
             suggestion: "将'的'改为'地'".to_string(),
@@ -598,8 +372,8 @@ fn check_de_usage(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
     for mat in de_de_regex.find_iter(line) {
         issues.push(TextIssue {
             line_number: line_idx + 1,
-            start: mat.start() + 1,
-            end: mat.start() + 2,
+            start: byte_to_char_index(line, mat.start() + 1),
+            end: byte_to_char_index(line, mat.start() + 2),
             issue_type: "语法错误".to_string(),
             message: "动词后接形容词应使用'得'而非'地'".to_string(),
             suggestion: "将'地'改为'得'".to_string(),
@@ -615,8 +389,8 @@ fn check_common_chinese_errors(line: &str, line_idx: usize, issues: &mut Vec<Tex
         if let Some(mat) = ba_regex.find(line) {
             issues.push(TextIssue {
                 line_number: line_idx + 1,
-                start: mat.start(),
-                end: mat.end(),
+                start: byte_to_char_index(line, mat.start()),
+                end: byte_to_char_index(line, mat.end()),
                 issue_type: "语法错误".to_string(),
                 message: "'把'字句可能缺少宾语".to_string(),
                 suggestion: "检查句子结构，确保'把'字后有完整的宾语和动作".to_string(),
@@ -631,8 +405,8 @@ fn check_common_chinese_errors(line: &str, line_idx: usize, issues: &mut Vec<Tex
         if content.len() > 20 && !content.contains("，") && !content.contains("。") {
             issues.push(TextIssue {
                 line_number: line_idx + 1,
-                start: mat.start(),
-                end: mat.end(),
+                start: byte_to_char_index(line, mat.start()),
+                end: byte_to_char_index(line, mat.end()),
                 issue_type: "语法建议".to_string(),
                 message: "'是...的'结构过长，可能影响阅读流畅度".to_string(),
                 suggestion: "考虑拆分句子或重新组织句子结构".to_string(),
@@ -655,14 +429,11 @@ fn check_subject_verb_agreement(line: &str, line_idx: usize, issues: &mut Vec<Te
             if let Some(mat) = regex.find(line) {
                 issues.push(TextIssue {
                     line_number: line_idx + 1,
-                    start: mat.start(),
-                    end: mat.end(),
-                    issue_type: "Grammar Error".to_string(),
-                    message: format!(
-                        "Subject-verb agreement error: '{}' with '{}'",
-                        subject, verb
-                    ),
-                    suggestion: format!("Use singular verb form with '{}'", subject),
+                    start: byte_to_char_index(line, mat.start()),
+                    end: byte_to_char_index(line, mat.end()),
+                    issue_type: "语法错误".to_string(),
+                    message: format!("主谓一致性错误: '{}' 与 '{}'", subject, verb),
+                    suggestion: format!("对于单数主语 '{}' 应使用单数动词形式", subject),
                 });
             }
         }
@@ -679,14 +450,11 @@ fn check_subject_verb_agreement(line: &str, line_idx: usize, issues: &mut Vec<Te
             if let Some(mat) = regex.find(line) {
                 issues.push(TextIssue {
                     line_number: line_idx + 1,
-                    start: mat.start(),
-                    end: mat.end(),
-                    issue_type: "Grammar Error".to_string(),
-                    message: format!(
-                        "Subject-verb agreement error: '{}' with '{}'",
-                        subject, verb
-                    ),
-                    suggestion: format!("Use plural verb form with '{}'", subject),
+                    start: byte_to_char_index(line, mat.start()),
+                    end: byte_to_char_index(line, mat.end()),
+                    issue_type: "语法错误".to_string(),
+                    message: format!("主谓一致性错误: '{}' 与 '{}'", subject, verb),
+                    suggestion: format!("对于复数主语 '{}' 应使用复数动词形式", subject),
                 });
             }
         }
@@ -700,11 +468,11 @@ fn check_article_usage(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>)
     if let Some(mat) = a_vowel_regex.find(line) {
         issues.push(TextIssue {
             line_number: line_idx + 1,
-            start: mat.start(),
-            end: mat.start() + 1,
-            issue_type: "Grammar Error".to_string(),
-            message: "Use 'an' before words starting with vowel sounds".to_string(),
-            suggestion: "Replace 'a' with 'an'".to_string(),
+            start: byte_to_char_index(line, mat.start()),
+            end: byte_to_char_index(line, mat.start() + 1),
+            issue_type: "冠词错误".to_string(),
+            message: "元音开头的单词前应使用'an'而非'a'".to_string(),
+            suggestion: "将'a'替换为'an'".to_string(),
         });
     }
 
@@ -714,11 +482,11 @@ fn check_article_usage(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>)
     if let Some(mat) = an_consonant_regex.find(line) {
         issues.push(TextIssue {
             line_number: line_idx + 1,
-            start: mat.start(),
-            end: mat.start() + 2,
-            issue_type: "Grammar Error".to_string(),
-            message: "Use 'a' before words starting with consonant sounds".to_string(),
-            suggestion: "Replace 'an' with 'a'".to_string(),
+            start: byte_to_char_index(line, mat.start()),
+            end: byte_to_char_index(line, mat.start() + 2),
+            issue_type: "冠词错误".to_string(),
+            message: "辅音开头的单词前应使用'a'而非'an'".to_string(),
+            suggestion: "将'an'替换为'a'".to_string(),
         });
     }
 }
@@ -740,11 +508,11 @@ fn check_common_english_errors(line: &str, line_idx: usize, issues: &mut Vec<Tex
         if let Some(mat) = regex.find(line) {
             issues.push(TextIssue {
                 line_number: line_idx + 1,
-                start: mat.start(),
-                end: mat.end(),
-                issue_type: "Grammar Error".to_string(),
-                message: "Double negative detected".to_string(),
-                suggestion: format!("Consider using '{}'", suggestion),
+                start: byte_to_char_index(line, mat.start()),
+                end: byte_to_char_index(line, mat.end()),
+                issue_type: "语法错误".to_string(),
+                message: "检测到双重否定".to_string(),
+                suggestion: format!("建议使用 '{}'", suggestion),
             });
         }
     }
@@ -764,11 +532,11 @@ fn check_common_english_errors(line: &str, line_idx: usize, issues: &mut Vec<Tex
         if let Some(mat) = regex.find(line) {
             issues.push(TextIssue {
                 line_number: line_idx + 1,
-                start: mat.start(),
-                end: mat.end(),
-                issue_type: "Grammar Error".to_string(),
-                message: "Incorrect preposition usage".to_string(),
-                suggestion: format!("Consider using '{}'", suggestion),
+                start: byte_to_char_index(line, mat.start()),
+                end: byte_to_char_index(line, mat.end()),
+                issue_type: "介词错误".to_string(),
+                message: "不正确的介词用法".to_string(),
+                suggestion: format!("建议使用 '{}'", suggestion),
             });
         }
     }
@@ -777,6 +545,30 @@ fn check_common_english_errors(line: &str, line_idx: usize, issues: &mut Vec<Tex
 #[tauri::command]
 fn read_file_content(path: &str) -> Result<String, String> {
     std::fs::read_to_string(path).map_err(|e| e.to_string())
+}
+
+// 自动检测文本语言
+fn detect_language(text: &str) -> String {
+    // 计算中文字符和英文字符的数量
+    let mut chinese_count = 0;
+    let mut english_count = 0;
+
+    for c in text.chars() {
+        if c >= '\u{4e00}' && c <= '\u{9fff}' {
+            // 中文字符范围
+            chinese_count += 1;
+        } else if c.is_ascii_alphabetic() {
+            // 英文字母
+            english_count += 1;
+        }
+    }
+
+    // 根据字符数量判断语言
+    if chinese_count > english_count {
+        "zh".to_string()
+    } else {
+        "en".to_string()
+    }
 }
 
 pub fn run() {
