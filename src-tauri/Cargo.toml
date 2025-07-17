@@ -1,0 +1,28 @@
+[package]
+name = "localcheck"
+version = "0.1.0"
+description = "论文本地校验工具"
+authors = ["you"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "localcheck_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "localcheck"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "1.5", features = [] }
+
+[dependencies]
+tauri = { version = "1.5", features = ["dialog-open", "dialog-save", "fs-read-file", "fs-read-dir"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0"
+regex = "1.10.2"
+rust-stemmers = "1.2.0"
+language-tags = "0.3.2"
+
