@@ -5,6 +5,14 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
+// 导入拼写检查模块
+mod dictionary;
+mod fix_functions;
+mod grammar_check;
+mod improved_checker;
+mod spelling_dict;
+mod title_checker;
+
 // Import our gr text processing limits
 const MAX_TEXT_LENGTH: usize = 50_000; // Maximum text length to process at once
 const MAX_LINE_LENGTH: usize = 500; // Maximum line length to process
@@ -72,6 +80,57 @@ fn analyze_text(text: &str) -> AnalysisResult {
     }
 }
 
+// 批量拼写检查命令
+#[tauri::command]
+fn batch_spell_check(text: &str) -> AnalysisResult {
+    let mut issues = Vec::new();
+    let mut stats = HashMap::new();
+    let mut truncated = false;
+
+    // Limit text size to prevent crashes
+    let text = if text.len() > MAX_TEXT_LENGTH {
+        truncated = true;
+        &text[0..MAX_TEXT_LENGTH]
+    } else {
+        text
+    };
+
+    // Calculate basic statistics
+    let total_chars = text.chars().count();
+    let total_words = text.split_whitespace().count();
+    let total_lines = text.lines().count();
+
+    stats.insert("total_chars".to_string(), total_chars);
+    stats.insert("total_words".to_string(), total_words);
+    stats.insert("total_lines".to_string(), total_lines);
+
+    // 使用批量拼写检查函数
+    let spelling_errors = spelling_dict::check_text_spelling(text);
+
+    // 将拼写错误转换为TextIssue格式
+    for (wrong_word, correction, line_idx, pos) in spelling_errors {
+        if issues.len() >= MAX_ISSUES {
+            truncated = true;
+            break;
+        }
+
+        issues.push(TextIssue {
+            line_number: line_idx + 1,
+            start: pos,
+            end: pos + wrong_word.len(),
+            issue_type: "拼写错误".to_string(),
+            message: format!("可能的拼写错误: '{}'", wrong_word),
+            suggestion: format!("建议修改为: '{}'", correction),
+        });
+    }
+
+    AnalysisResult {
+        issues,
+        stats,
+        truncated,
+    }
+}
+
 // Process a chunk of text
 fn process_text_chunk(
     text: &str,
@@ -117,11 +176,11 @@ fn process_text_chunk(
             break;
         }
 
-        // Check passive voice (simplified)
-        check_passive_voice(line, line_idx, issues, &line_language);
-        if issues.len() >= MAX_ISSUES {
-            break;
-        }
+        // 被动语态检查已禁用
+        // check_passive_voice(line, line_idx, issues, &line_language);
+        // if issues.len() >= MAX_ISSUES {
+        //     break;
+        // }
 
         // Check redundant expressions
         check_redundant_expressions(line, line_idx, issues, &line_language);
@@ -129,14 +188,68 @@ fn process_text_chunk(
             break;
         }
 
-        // Check common typos
+        // 使用改进的拼写检查器，解决单词切分不当和重复提示的问题
+        improved_checker::check_spelling(line, line_idx, issues);
+        if issues.len() >= MAX_ISSUES {
+            break;
+        }
+
+        // 检查常见拼写错误
         check_common_typos(line, line_idx, issues, &line_language);
+        if issues.len() >= MAX_ISSUES {
+            break;
+        }
+
+        // 使用标题检查器检查标题中的拼写错误
+        title_checker::check_title_spelling(line, line_idx, issues);
         if issues.len() >= MAX_ISSUES {
             break;
         }
 
         // Check grammar issues
         check_grammar_issues(line, line_idx, issues, &line_language);
+        if issues.len() >= MAX_ISSUES {
+            break;
+        }
+
+        // 使用语法检查模块
+        grammar_check::check_word_order(line, line_idx, issues);
+        if issues.len() >= MAX_ISSUES {
+            break;
+        }
+
+        grammar_check::check_chinese_punctuation(line, line_idx, issues);
+        if issues.len() >= MAX_ISSUES {
+            break;
+        }
+
+        grammar_check::check_tense_consistency(line, line_idx, issues);
+        if issues.len() >= MAX_ISSUES {
+            break;
+        }
+
+        grammar_check::check_preposition_usage(line, line_idx, issues);
+        if issues.len() >= MAX_ISSUES {
+            break;
+        }
+
+        // 使用修复函数模块
+        fix_functions::check_idiom_usage(line, line_idx, issues);
+        if issues.len() >= MAX_ISSUES {
+            break;
+        }
+
+        fix_functions::check_academic_style(line, line_idx, issues, &line_language);
+        if issues.len() >= MAX_ISSUES {
+            break;
+        }
+
+        fix_functions::check_sentence_length(line, line_idx, issues, &line_language);
+        if issues.len() >= MAX_ISSUES {
+            break;
+        }
+
+        fix_functions::check_citation_format(line, line_idx, issues);
         if issues.len() >= MAX_ISSUES {
             break;
         }
@@ -149,43 +262,97 @@ fn check_repeated_words(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>
         return;
     }
 
+    // 使用更简单的方法检测重复词
     let words: Vec<&str> = line.split_whitespace().collect();
 
+    // 跟踪已经检测到的重复词，避免重复报告
+    let mut detected_positions = Vec::new();
+
     for i in 0..words.len().saturating_sub(1) {
-        if words[i].len() > 3 && words[i] == words[i + 1] {
-            // Find position of first word
-            let first_word_pos = match line.find(words[i]) {
-                Some(pos) => pos,
-                None => continue, // Skip if word not found
-            };
+        // 跳过太短的词（少于4个字母的英文词或1个汉字）
+        let min_length = if words[i].chars().any(|c| c >= '\u{4e00}' && c <= '\u{9fff}') {
+            1 // 中文词至少1个字
+        } else {
+            4 // 英文词至少4个字母
+        };
 
-            // Find position of second word (starting after first word)
-            let second_word_pos = match line[first_word_pos + words[i].len()..].find(words[i]) {
-                Some(pos) => first_word_pos + words[i].len() + pos,
-                None => continue, // Skip if second word not found
-            };
+        if words[i].chars().count() < min_length {
+            continue;
+        }
 
-            // Ensure only whitespace between words
-            let between_text = &line[first_word_pos + words[i].len()..second_word_pos];
-            if !between_text.trim().is_empty() {
-                continue; // Skip if non-whitespace between words
-            }
+        // 检查是否与下一个词相同
+        if words[i] == words[i + 1] {
+            // 找到第一个词的位置
+            if let Some(first_word_pos) = find_whole_word(line, words[i]) {
+                // 找到第二个词的位置（从第一个词之后开始查找）
+                let after_first = &line[first_word_pos + words[i].len()..];
+                if let Some(second_pos) = find_whole_word(after_first, words[i]) {
+                    let second_word_pos = first_word_pos + words[i].len() + second_pos;
 
-            issues.push(TextIssue {
-                line_number: line_idx + 1,
-                start: byte_to_char_index(line, first_word_pos),
-                end: byte_to_char_index(line, second_word_pos + words[i].len()),
-                issue_type: "重复词".to_string(),
-                message: format!("重复使用词语 '{}'", words[i]),
-                suggestion: format!("删除重复的 '{}'", words[i]),
-            });
+                    // 确保两个词之间只有空白字符
+                    let between_text = &line[first_word_pos + words[i].len()..second_word_pos];
+                    if between_text.trim().is_empty() {
+                        // 检查是否已经检测到这个位置的重复词
+                        let already_detected = detected_positions.iter().any(|&(start, end)| {
+                            (first_word_pos >= start && first_word_pos < end)
+                                || (second_word_pos >= start && second_word_pos < end)
+                        });
 
-            // Stop if we've found too many issues
-            if issues.len() >= MAX_ISSUES {
-                return;
+                        if !already_detected {
+                            issues.push(TextIssue {
+                                line_number: line_idx + 1,
+                                start: byte_to_char_index(line, first_word_pos),
+                                end: byte_to_char_index(line, second_word_pos + words[i].len()),
+                                issue_type: "重复词".to_string(),
+                                message: format!("重复使用词语 '{}'", words[i]),
+                                suggestion: format!("删除重复的 '{}'", words[i]),
+                            });
+
+                            // 记录已检测的位置
+                            detected_positions
+                                .push((first_word_pos, second_word_pos + words[i].len()));
+
+                            // Stop if we've found too many issues
+                            if issues.len() >= MAX_ISSUES {
+                                return;
+                            }
+                        }
+                    }
+                }
             }
         }
     }
+}
+
+// 查找完整单词的位置，确保不会匹配到单词的一部分
+fn find_whole_word(text: &str, word: &str) -> Option<usize> {
+    let mut start_idx = 0;
+
+    while let Some(pos) = text[start_idx..].find(word) {
+        let actual_pos = start_idx + pos;
+
+        // 检查单词前后是否是单词边界（空格、标点符号等）
+        let is_start_boundary = actual_pos == 0
+            || !text
+                .chars()
+                .nth(actual_pos - 1)
+                .map_or(false, |c| c.is_alphanumeric());
+
+        let is_end_boundary = actual_pos + word.len() >= text.len()
+            || !text
+                .chars()
+                .nth(actual_pos + word.len())
+                .map_or(false, |c| c.is_alphanumeric());
+
+        if is_start_boundary && is_end_boundary {
+            return Some(actual_pos);
+        }
+
+        // 继续查找下一个匹配
+        start_idx = actual_pos + 1;
+    }
+
+    None
 }
 
 fn check_punctuation(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
@@ -245,6 +412,7 @@ fn check_punctuation(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
     }
 }
 
+#[allow(dead_code)]
 fn check_passive_voice(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>, language: &str) {
     // Skip if we've already found too many issues
     if issues.len() >= MAX_ISSUES {
@@ -411,13 +579,294 @@ fn check_common_typos(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>, 
             }
         }
     } else {
-        // English common typo detection - simplified list
+        // 使用我们的拼写检查字典进行更全面的拼写检查
+        // 将行分割成单词并进行处理
+        let words: Vec<&str> = line
+            .split(|c: char| !c.is_alphanumeric() && c != '\'')
+            .map(|w| w.trim())
+            .filter(|w| !w.is_empty())
+            .collect();
+
+        for word in words {
+            // 跳过太短的单词和纯数字
+            if word.len() <= 2 || word.chars().all(|c| c.is_numeric()) {
+                continue;
+            }
+
+            // 清理单词，去除可能的标点符号
+            let clean_word = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '\'');
+            if clean_word.is_empty() {
+                continue;
+            }
+
+            // 检查单词是否在拼写错误字典中
+            if let Some(correction) = spelling_dict::check_word_spelling(clean_word) {
+                // 找到单词在原始行中的位置
+                if let Some(pos) = line.find(clean_word) {
+                    issues.push(TextIssue {
+                        line_number: line_idx + 1,
+                        start: byte_to_char_index(line, pos),
+                        end: byte_to_char_index(line, pos + clean_word.len()),
+                        issue_type: "拼写错误".to_string(),
+                        message: format!("可能的拼写错误: '{}'", clean_word),
+                        suggestion: format!("建议修改为: '{}'", correction),
+                    });
+
+                    // Stop if we've found too many issues
+                    if issues.len() >= MAX_ISSUES {
+                        return;
+                    }
+                }
+            }
+        }
+
+        // 特别检查标题和专有名词中的拼写错误
+        // 这对于检测您提供的示例特别有用
         let typos: HashMap<&str, &str> = [
+            // 常见拼写错误
             ("teh", "the"),
             ("recieve", "receive"),
             ("wierd", "weird"),
             ("alot", "a lot"),
             ("definately", "definitely"),
+            ("seperate", "separate"),
+            ("occured", "occurred"),
+            ("accomodate", "accommodate"),
+            ("adress", "address"),
+            ("advertisment", "advertisement"),
+            ("agressive", "aggressive"),
+            ("apparant", "apparent"),
+            ("appearence", "appearance"),
+            ("arguement", "argument"),
+            ("assasination", "assassination"),
+            ("basicly", "basically"),
+            ("begining", "beginning"),
+            ("beleive", "believe"),
+            ("belive", "believe"),
+            ("buisness", "business"),
+            ("calender", "calendar"),
+            ("catagory", "category"),
+            ("cemetary", "cemetery"),
+            ("changable", "changeable"),
+            ("cheif", "chief"),
+            ("collegue", "colleague"),
+            ("comming", "coming"),
+            ("commitee", "committee"),
+            ("completly", "completely"),
+            ("concious", "conscious"),
+            ("curiousity", "curiosity"),
+            ("decieve", "deceive"),
+            ("definate", "definite"),
+            ("definitly", "definitely"),
+            ("dissapoint", "disappoint"),
+            ("embarass", "embarrass"),
+            ("enviroment", "environment"),
+            ("existance", "existence"),
+            ("experiance", "experience"),
+            ("familliar", "familiar"),
+            ("finaly", "finally"),
+            ("foriegn", "foreign"),
+            ("freind", "friend"),
+            ("goverment", "government"),
+            ("gaurd", "guard"),
+            ("happend", "happened"),
+            ("harrass", "harass"),
+            ("hieght", "height"),
+            ("immediatly", "immediately"),
+            ("independant", "independent"),
+            ("interupt", "interrupt"),
+            ("irrelevent", "irrelevant"),
+            ("knowlege", "knowledge"),
+            ("liason", "liaison"),
+            ("libary", "library"),
+            ("lisence", "license"),
+            ("maintainance", "maintenance"),
+            ("managment", "management"),
+            ("medecine", "medicine"),
+            ("millenium", "millennium"),
+            ("miniscule", "minuscule"),
+            ("mispell", "misspell"),
+            ("neccessary", "necessary"),
+            ("negociate", "negotiate"),
+            ("nieghbor", "neighbor"),
+            ("noticable", "noticeable"),
+            ("occassion", "occasion"),
+            ("occassionally", "occasionally"),
+            ("occurance", "occurrence"),
+            ("ocurrance", "occurrence"),
+            ("oppurtunity", "opportunity"),
+            ("persistant", "persistent"),
+            ("posession", "possession"),
+            ("prefered", "preferred"),
+            ("presance", "presence"),
+            ("propoganda", "propaganda"),
+            ("publically", "publicly"),
+            ("realy", "really"),
+            ("reccomend", "recommend"),
+            ("recieve", "receive"),
+            ("refered", "referred"),
+            ("relevent", "relevant"),
+            ("religous", "religious"),
+            ("remeber", "remember"),
+            ("repitition", "repetition"),
+            ("rythm", "rhythm"),
+            ("secratary", "secretary"),
+            ("sieze", "seize"),
+            ("similer", "similar"),
+            ("sincerely", "sincerely"),
+            ("speach", "speech"),
+            ("succesful", "successful"),
+            ("supercede", "supersede"),
+            ("supress", "suppress"),
+            ("suprise", "surprise"),
+            ("temperture", "temperature"),
+            ("tendancy", "tendency"),
+            ("therefor", "therefore"),
+            ("threshhold", "threshold"),
+            ("tommorrow", "tomorrow"),
+            ("tounge", "tongue"),
+            ("truely", "truly"),
+            ("twelth", "twelfth"),
+            ("tyrany", "tyranny"),
+            ("underate", "underrate"),
+            ("untill", "until"),
+            ("usally", "usually"),
+            ("vaccuum", "vacuum"),
+            ("vegtable", "vegetable"),
+            ("vehical", "vehicle"),
+            ("visable", "visible"),
+            ("wether", "whether"),
+            ("withhold", "withhold"),
+            ("writting", "writing"),
+            // 学术论文中常见错误
+            ("enronment", "environment"),
+            ("financal", "financial"),
+            ("alocation", "allocation"),
+            ("empincal", "empirical"),
+            ("eydence", "evidence"),
+            ("analyis", "analysis"),
+            ("reseach", "research"),
+            ("statisical", "statistical"),
+            ("significiant", "significant"),
+            ("hypothsis", "hypothesis"),
+            ("methodolgy", "methodology"),
+            ("framwork", "framework"),
+            ("implmentation", "implementation"),
+            ("exprimental", "experimental"),
+            ("corelation", "correlation"),
+            ("varibles", "variables"),
+            ("efficency", "efficiency"),
+            ("optimzation", "optimization"),
+            ("algoritm", "algorithm"),
+            ("proceedure", "procedure"),
+            ("comparision", "comparison"),
+            ("improvment", "improvement"),
+            ("performace", "performance"),
+            ("technolgoy", "technology"),
+            ("inovation", "innovation"),
+            ("developement", "development"),
+            ("infomation", "information"),
+            ("comunication", "communication"),
+            ("straegy", "strategy"),
+            ("competitve", "competitive"),
+            ("advantge", "advantage"),
+            ("sustainble", "sustainable"),
+            ("organiztion", "organization"),
+            ("managment", "management"),
+            ("leadrship", "leadership"),
+            ("corprate", "corporate"),
+            ("enterprse", "enterprise"),
+            ("industy", "industry"),
+            ("manufactring", "manufacturing"),
+            ("producton", "production"),
+            ("distribtion", "distribution"),
+            ("consumtion", "consumption"),
+            ("econmic", "economic"),
+            ("finacial", "financial"),
+            ("investent", "investment"),
+            ("markting", "marketing"),
+            ("advertsing", "advertising"),
+            ("behavor", "behavior"),
+            ("psycholgy", "psychology"),
+            ("sociolgy", "sociology"),
+            ("politcal", "political"),
+            ("governent", "government"),
+            ("regultion", "regulation"),
+            ("legisltion", "legislation"),
+            ("interntional", "international"),
+            ("globl", "global"),
+            ("reginal", "regional"),
+            ("natinal", "national"),
+            ("popultion", "population"),
+            ("demographc", "demographic"),
+            ("geographc", "geographic"),
+            ("environental", "environmental"),
+            ("sustainbility", "sustainability"),
+            ("resouces", "resources"),
+            ("enery", "energy"),
+            ("efficent", "efficient"),
+            ("renewble", "renewable"),
+            ("polluton", "pollution"),
+            ("conservtion", "conservation"),
+            ("biodivrsity", "biodiversity"),
+            ("ecosytem", "ecosystem"),
+            ("climte", "climate"),
+            ("temperture", "temperature"),
+            ("atmosphre", "atmosphere"),
+            ("emisssions", "emissions"),
+            ("carbbon", "carbon"),
+            ("footprnt", "footprint"),
+            ("sustainble", "sustainable"),
+            ("developent", "development"),
+            ("innovtion", "innovation"),
+            ("technolgy", "technology"),
+            ("digitl", "digital"),
+            ("computr", "computer"),
+            ("softwre", "software"),
+            ("hardwre", "hardware"),
+            ("netwrk", "network"),
+            ("internnet", "internet"),
+            ("databse", "database"),
+            ("algoritm", "algorithm"),
+            ("programing", "programming"),
+            ("artifical", "artificial"),
+            ("intellgence", "intelligence"),
+            ("machne", "machine"),
+            ("learnng", "learning"),
+            ("robotcs", "robotics"),
+            ("automtion", "automation"),
+            ("virtal", "virtual"),
+            ("realiy", "reality"),
+            ("augmeted", "augmented"),
+            ("simultion", "simulation"),
+            ("modelng", "modeling"),
+            ("predicton", "prediction"),
+            ("forecsting", "forecasting"),
+            ("optimzation", "optimization"),
+            ("efficincy", "efficiency"),
+            ("effectveness", "effectiveness"),
+            ("performnce", "performance"),
+            ("productvity", "productivity"),
+            ("qualiy", "quality"),
+            ("reliablity", "reliability"),
+            ("validty", "validity"),
+            ("accurcy", "accuracy"),
+            ("precison", "precision"),
+            ("measurment", "measurement"),
+            ("evaluaton", "evaluation"),
+            ("assessent", "assessment"),
+            ("analyis", "analysis"),
+            ("synthsis", "synthesis"),
+            ("integrtion", "integration"),
+            ("implementtion", "implementation"),
+            ("executon", "execution"),
+            ("operaton", "operation"),
+            ("maintenace", "maintenance"),
+            ("improvment", "improvement"),
+            ("enhancment", "enhancement"),
+            ("optimiztion", "optimization"),
+            ("maximiztion", "maximization"),
+            ("minimiztion", "minimization"),
         ]
         .iter()
         .cloned()
@@ -797,7 +1246,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             analyze_text,
             read_file_content,
-            analyze_large_file
+            analyze_large_file,
+            batch_spell_check
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

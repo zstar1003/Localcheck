@@ -71,6 +71,28 @@ function App() {
       setIsAnalyzing(false);
     }
   };
+  
+  // 批量拼写检查
+  const batchSpellCheck = async () => {
+    if (!text.trim() && !filePath) return;
+    
+    setIsAnalyzing(true);
+    setError(null);
+    
+    try {
+      // 直接分析文本内容
+      console.log("Batch spell checking text:", text.substring(0, 50) + "...");
+      const result = await invoke<AnalysisResult>("batch_spell_check", { text });
+      
+      console.log("Spell check result:", result);
+      setAnalysisResult(result);
+    } catch (error) {
+      console.error("拼写检查时出错:", error);
+      setError(`拼写检查失败: ${error}`);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
 
   // 打开文件
   const openFile = async () => {
