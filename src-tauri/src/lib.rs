@@ -5,11 +5,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
-// Import our grammar checking modules
-mod fix_functions;
-mod grammar_check;
-
-// Constants for text processing limits
+// Import our gr text processing limits
 const MAX_TEXT_LENGTH: usize = 50_000; // Maximum text length to process at once
 const MAX_LINE_LENGTH: usize = 500; // Maximum line length to process
 const MAX_ISSUES: usize = 500; // Maximum number of issues to return
