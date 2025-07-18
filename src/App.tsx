@@ -15,16 +15,17 @@ interface TextIssue {
 interface AnalysisResult {
   issues: TextIssue[];
   stats: Record<string, number>;
+  truncated: boolean;
 }
 
 function App() {
   const [text, setText] = useState<string>("");
   const [fileName, setFileName] = useState<string>("");
-  // 自动检测语言，不再需要语言选择器
+  const [filePath, setFilePath] = useState<string>("");
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
-  const [selectedIssue, setSelectedIssue] = useState<TextIssue | null>(null);
-  // Removed unused tooltipPosition state
+  const [error, setError] = useState<string | null>(null);
+  const [isLargeFile, setIsLargeFile] = useState<boolean>(false);
   const editorRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -43,18 +44,29 @@ function App() {
 
   // 分析文本
   const analyzeText = async () => {
-    if (!text.trim()) return;
+    if (!text.trim() && !filePath) return;
     
     setIsAnalyzing(true);
+    setError(null);
+    
     try {
-      console.log("Analyzing text:", text.substring(0, 50) + "...");
+      let result: AnalysisResult;
       
-      // 不再需要传递language参数，后端会自动检测
-      const result = await invoke<AnalysisResult>("analyze_text", { text });
+      if (isLargeFile && filePath) {
+        // 使用文件路径分析大文件
+        console.log("Analyzing large file:", filePath);
+        result = await invoke<AnalysisResult>("analyze_large_file", { path: filePath });
+      } else {
+        // 直接分析文本内容
+        console.log("Analyzing text:", text.substring(0, 50) + "...");
+        result = await invoke<AnalysisResult>("analyze_text", { text });
+      }
+      
       console.log("Analysis result:", result);
       setAnalysisResult(result);
     } catch (error) {
       console.error("分析文本时出错:", error);
+      setError(`分析失败: ${error}`);
     } finally {
       setIsAnalyzing(false);
     }
@@ -73,21 +85,39 @@ function App() {
       
       if (selected && typeof selected === "string") {
         console.log("Selected file:", selected);
-        const content = await invoke<string>("read_file_content", { path: selected });
-        console.log("File content length:", content.length);
-        setText(content);
+        setFilePath(selected);
         
-        // 提取文件名
-        const pathParts = selected.split(/[/\\]/);
-        setFileName(pathParts[pathParts.length - 1]);
-        
-        // 自动分析
-        setTimeout(() => {
-          analyzeText();
-        }, 100);
+        try {
+          const content = await invoke<string>("read_file_content", { path: selected });
+          console.log("File content length:", content.length);
+          
+          // 提取文件名
+          const pathParts = selected.split(/[/\\]/);
+          const fileName = pathParts[pathParts.length - 1];
+          setFileName(fileName);
+          
+          // 检查是否为大文件
+          const isLarge = content.length > 50000;
+          setIsLargeFile(isLarge);
+          
+          if (isLarge) {
+            setText("文件过大，仅显示部分内容...\n\n" + content);
+          } else {
+            setText(content);
+          }
+          
+          // 自动分析
+          setTimeout(() => {
+            analyzeText();
+          }, 100);
+        } catch (error) {
+          console.error("读取文件内容时出错:", error);
+          setError(`无法读取文件: ${error}`);
+        }
       }
     } catch (error) {
       console.error("打开文件时出错:", error);
+      setError(`打开文件对话框时出错: ${error}`);
     }
   };
 
@@ -97,7 +127,7 @@ function App() {
   // 处理文本变化
   const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setText(e.target.value);
-    // 不清除分析结果，保持显示
+    setIsLargeFile(false); // 用户编辑了文本，不再是大文件模式
     
     // 设置防抖定时器，在用户停止输入1秒后自动重新分析
     if (debounceTimerRef.current) {
@@ -113,8 +143,6 @@ function App() {
 
   // 点击问题项，高亮对应文本
   const handleIssueClick = (issue: TextIssue) => {
-    setSelectedIssue(issue);
-    
     if (textareaRef.current) {
       try {
         // 计算行的位置
@@ -155,29 +183,6 @@ function App() {
     }
   };
 
-  // 渲染带有高亮的文本
-  const renderHighlightedText = () => {
-    if (!analysisResult || analysisResult.issues.length === 0) {
-      return <textarea
-        ref={textareaRef}
-        className="editor-textarea"
-        value={text}
-        onChange={handleTextChange}
-        placeholder="在此输入或粘贴文本，或者点击'打开文件'按钮导入文件..."
-      />;
-    }
-
-    return (
-      <textarea
-        ref={textareaRef}
-        className="editor-textarea"
-        value={text}
-        onChange={handleTextChange}
-        placeholder="在此输入或粘贴文本，或者点击'打开文件'按钮导入文件..."
-      />
-    );
-  };
-
   return (
     <div className="app-container">
       <div className="header">
@@ -186,7 +191,7 @@ function App() {
           <button 
             className="button" 
             onClick={analyzeText} 
-            disabled={!text.trim() || isAnalyzing}
+            disabled={(!text.trim() && !filePath) || isAnalyzing}
             style={{ marginLeft: '10px' }}
           >
             {isAnalyzing ? "分析中..." : "分析文本"}
@@ -207,10 +212,17 @@ function App() {
           <div className="editor-header">
             <div className="file-info">
               {fileName ? `文件: ${fileName}` : "新文档"}
+              {isLargeFile && " (大文件模式)"}
             </div>
           </div>
           <div className="editor-content" ref={editorRef}>
-            {renderHighlightedText()}
+            <textarea
+              ref={textareaRef}
+              className="editor-textarea"
+              value={text}
+              onChange={handleTextChange}
+              placeholder="在此输入或粘贴文本，或者点击'打开文件'按钮导入文件..."
+            />
           </div>
         </div>
 
@@ -219,7 +231,11 @@ function App() {
             分析结果
           </div>
           <div className="results-content">
-            {analysisResult ? (
+            {error ? (
+              <div className="error-message">
+                {error}
+              </div>
+            ) : analysisResult ? (
               <>
                 <div className="stats-container">
                   <div className="stats-item">
@@ -236,9 +252,21 @@ function App() {
                   </div>
                   <div className="stats-item">
                     <span>检测到的问题:</span>
-                    <span>{analysisResult.issues.length}</span>
+                    <span>{analysisResult.issues.length}{analysisResult.truncated ? "+" : ""}</span>
                   </div>
                 </div>
+
+                {analysisResult.truncated && (
+                  <div className="warning-message">
+                    注意: 文本过长或问题过多，仅显示部分分析结果。
+                  </div>
+                )}
+
+                {isLargeFile && (
+                  <div className="info-message">
+                    大文件模式: 文件较大，仅显示部分内容和分析结果。
+                  </div>
+                )}
 
                 {analysisResult.issues.length > 0 ? (
                   analysisResult.issues.map((issue, index) => (
@@ -263,7 +291,7 @@ function App() {
               </>
             ) : (
               <div style={{ padding: '1rem', textAlign: 'center' }}>
-                {text.trim() ? (
+                {text.trim() || filePath ? (
                   isAnalyzing ? 
                     "正在分析文本..." : 
                     "点击'分析文本'按钮开始检查"
@@ -275,8 +303,6 @@ function App() {
           </div>
         </div>
       </div>
-
-      {/* Tooltip removed as it's not being used */}
     </div>
   );
 }

@@ -1,10 +1,19 @@
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+use std::path::Path;
 
 // Import our grammar checking modules
 mod fix_functions;
 mod grammar_check;
+
+// Constants for text processing limits
+const MAX_TEXT_LENGTH: usize = 50_000; // Maximum text length to process at once
+const MAX_LINE_LENGTH: usize = 500; // Maximum line length to process
+const MAX_ISSUES: usize = 500; // Maximum number of issues to return
+const MAX_FILE_SIZE: u64 = 5_000_000; // Maximum file size (5MB)
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TextIssue {
@@ -25,12 +34,22 @@ fn byte_to_char_index(s: &str, byte_idx: usize) -> usize {
 pub struct AnalysisResult {
     issues: Vec<TextIssue>,
     stats: HashMap<String, usize>,
+    truncated: bool,
 }
 
 #[tauri::command]
 fn analyze_text(text: &str) -> AnalysisResult {
     let mut issues = Vec::new();
     let mut stats = HashMap::new();
+    let mut truncated = false;
+
+    // Limit text size to prevent crashes
+    let text = if text.len() > MAX_TEXT_LENGTH {
+        truncated = true;
+        &text[0..MAX_TEXT_LENGTH]
+    } else {
+        text
+    };
 
     // Calculate basic statistics
     let total_chars = text.chars().count();
@@ -41,43 +60,99 @@ fn analyze_text(text: &str) -> AnalysisResult {
     stats.insert("total_words".to_string(), total_words);
     stats.insert("total_lines".to_string(), total_lines);
 
+    // Process text in smaller chunks to avoid memory issues
+    process_text_chunk(text, 0, &mut issues, &mut truncated);
+
+    // Limit the number of issues returned
+    if issues.len() > MAX_ISSUES {
+        issues.truncate(MAX_ISSUES);
+        truncated = true;
+    }
+
+    AnalysisResult {
+        issues,
+        stats,
+        truncated,
+    }
+}
+
+// Process a chunk of text
+fn process_text_chunk(
+    text: &str,
+    start_line: usize,
+    issues: &mut Vec<TextIssue>,
+    truncated: &mut bool,
+) {
     // Analyze each line
-    for (line_idx, line) in text.lines().enumerate() {
+    for (rel_line_idx, line) in text.lines().enumerate() {
+        let line_idx = start_line + rel_line_idx;
+
+        // Skip empty lines
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        // Limit line length to prevent excessive processing
+        let line = if line.len() > MAX_LINE_LENGTH {
+            *truncated = true;
+            &line[0..MAX_LINE_LENGTH]
+        } else {
+            line
+        };
+
+        // Stop if we've found too many issues
+        if issues.len() >= MAX_ISSUES {
+            *truncated = true;
+            break;
+        }
+
         // Auto-detect language for the current line
         let line_language = detect_language(line);
 
         // Check for repeated words
-        check_repeated_words(line, line_idx, &mut issues);
+        check_repeated_words(line, line_idx, issues);
+        if issues.len() >= MAX_ISSUES {
+            break;
+        }
 
         // Check punctuation usage
-        check_punctuation(line, line_idx, &mut issues);
+        check_punctuation(line, line_idx, issues);
+        if issues.len() >= MAX_ISSUES {
+            break;
+        }
 
         // Check passive voice (simplified)
-        check_passive_voice(line, line_idx, &mut issues, &line_language);
+        check_passive_voice(line, line_idx, issues, &line_language);
+        if issues.len() >= MAX_ISSUES {
+            break;
+        }
 
         // Check redundant expressions
-        check_redundant_expressions(line, line_idx, &mut issues, &line_language);
+        check_redundant_expressions(line, line_idx, issues, &line_language);
+        if issues.len() >= MAX_ISSUES {
+            break;
+        }
 
         // Check common typos
-        check_common_typos(line, line_idx, &mut issues, &line_language);
+        check_common_typos(line, line_idx, issues, &line_language);
+        if issues.len() >= MAX_ISSUES {
+            break;
+        }
 
         // Check grammar issues
-        check_grammar_issues(line, line_idx, &mut issues, &line_language);
-
-        // Check academic writing style
-        fix_functions::check_academic_style(line, line_idx, &mut issues, &line_language);
-
-        // Check sentence length
-        fix_functions::check_sentence_length(line, line_idx, &mut issues, &line_language);
-
-        // Check citation format
-        fix_functions::check_citation_format(line, line_idx, &mut issues);
+        check_grammar_issues(line, line_idx, issues, &line_language);
+        if issues.len() >= MAX_ISSUES {
+            break;
+        }
     }
-
-    AnalysisResult { issues, stats }
 }
 
 fn check_repeated_words(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
+    // Skip if we've already found too many issues
+    if issues.len() >= MAX_ISSUES {
+        return;
+    }
+
     let words: Vec<&str> = line.split_whitespace().collect();
 
     for i in 0..words.len().saturating_sub(1) {
@@ -108,11 +183,21 @@ fn check_repeated_words(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>
                 message: format!("重复使用词语 '{}'", words[i]),
                 suggestion: format!("删除重复的 '{}'", words[i]),
             });
+
+            // Stop if we've found too many issues
+            if issues.len() >= MAX_ISSUES {
+                return;
+            }
         }
     }
 }
 
 fn check_punctuation(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
+    // Skip if we've already found too many issues
+    if issues.len() >= MAX_ISSUES {
+        return;
+    }
+
     // Check for mixed Chinese and English punctuation
     // Use individual character checks instead of regex for Chinese punctuation
     let has_chinese_punct = line.contains('，')
@@ -139,6 +224,11 @@ fn check_punctuation(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
             message: "中英文标点符号混用".to_string(),
             suggestion: "请统一使用中文或英文标点符号".to_string(),
         });
+
+        // Stop if we've found too many issues
+        if issues.len() >= MAX_ISSUES {
+            return;
+        }
     }
 
     // Check for consecutive punctuation
@@ -160,6 +250,11 @@ fn check_punctuation(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
 }
 
 fn check_passive_voice(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>, language: &str) {
+    // Skip if we've already found too many issues
+    if issues.len() >= MAX_ISSUES {
+        return;
+    }
+
     if language == "zh" {
         // Chinese passive voice detection (simplified)
         let passive_markers = ["被", "受到", "遭到", "遭受"];
@@ -174,6 +269,11 @@ fn check_passive_voice(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>,
                     message: "使用了被动语态".to_string(),
                     suggestion: "考虑使用主动语态以增强表达力".to_string(),
                 });
+
+                // Stop if we've found too many issues
+                if issues.len() >= MAX_ISSUES {
+                    return;
+                }
             }
         }
     } else {
@@ -202,6 +302,11 @@ fn check_passive_voice(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>,
                                 message: "检测到被动语态".to_string(),
                                 suggestion: "考虑使用主动语态以增强表达力".to_string(),
                             });
+
+                            // Stop if we've found too many issues
+                            if issues.len() >= MAX_ISSUES {
+                                return;
+                            }
                             break;
                         }
                     }
@@ -217,6 +322,11 @@ fn check_redundant_expressions(
     issues: &mut Vec<TextIssue>,
     language: &str,
 ) {
+    // Skip if we've already found too many issues
+    if issues.len() >= MAX_ISSUES {
+        return;
+    }
+
     let redundant_expressions: HashMap<&str, &str> = if language == "zh" {
         [
             ("事实上", "可以直接陈述事实"),
@@ -252,11 +362,21 @@ fn check_redundant_expressions(
                 message: format!("冗余表达: '{}'", phrase),
                 suggestion: suggestion.to_string(),
             });
+
+            // Stop if we've found too many issues
+            if issues.len() >= MAX_ISSUES {
+                return;
+            }
         }
     }
 }
 
 fn check_common_typos(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>, language: &str) {
+    // Skip if we've already found too many issues
+    if issues.len() >= MAX_ISSUES {
+        return;
+    }
+
     // Chinese repeated character detection
     if language == "zh" {
         // Detect consecutive repeated single characters
@@ -285,6 +405,11 @@ fn check_common_typos(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>, 
                 });
 
                 i += 2; // Skip detected repeated characters
+
+                // Stop if we've found too many issues
+                if issues.len() >= MAX_ISSUES {
+                    return;
+                }
             } else {
                 i += 1;
             }
@@ -297,11 +422,6 @@ fn check_common_typos(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>, 
             ("wierd", "weird"),
             ("alot", "a lot"),
             ("definately", "definitely"),
-            ("seperate", "separate"),
-            ("occured", "occurred"),
-            ("untill", "until"),
-            ("wich", "which"),
-            ("recieved", "received"),
         ]
         .iter()
         .cloned()
@@ -324,87 +444,62 @@ fn check_common_typos(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>, 
                     message: format!("可能的拼写错误: '{}'", typo),
                     suggestion: format!("建议修改为: '{}'", correction),
                 });
+
+                // Stop if we've found too many issues
+                if issues.len() >= MAX_ISSUES {
+                    return;
+                }
             }
         }
     }
 }
 
 fn check_grammar_issues(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>, language: &str) {
+    // Skip if we've already found too many issues
+    if issues.len() >= MAX_ISSUES {
+        return;
+    }
+
     if language == "zh" {
-        // Chinese grammar checks
+        // Chinese grammar checks - simplified for performance
+        // Only check the most important rules
 
         // Check "的得地" usage
         check_de_usage(line, line_idx, issues);
+        if issues.len() >= MAX_ISSUES {
+            return;
+        }
 
         // Check common Chinese errors
         check_common_chinese_errors(line, line_idx, issues);
-
-        // Check measure word usage
-        check_measure_word_usage(line, line_idx, issues);
-
-        // Check idiom usage
-        fix_functions::check_idiom_usage(line, line_idx, issues);
-
-        // Check word order issues
-        grammar_check::check_word_order(line, line_idx, issues);
-
-        // Check punctuation usage
-        grammar_check::check_chinese_punctuation(line, line_idx, issues);
+        if issues.len() >= MAX_ISSUES {
+            return;
+        }
     } else {
-        // English grammar checks
+        // English grammar checks - simplified for performance
+        // Only check the most important rules
 
         // Check subject-verb agreement
         check_subject_verb_agreement(line, line_idx, issues);
+        if issues.len() >= MAX_ISSUES {
+            return;
+        }
 
         // Check article usage
         check_article_usage(line, line_idx, issues);
-
-        // Check tense consistency
-        grammar_check::check_tense_consistency(line, line_idx, issues);
-
-        // Check preposition usage
-        grammar_check::check_preposition_usage(line, line_idx, issues);
-
-        // Check common English errors
-        check_common_english_errors(line, line_idx, issues);
-    }
-}
-
-// Check Chinese measure word usage
-fn check_measure_word_usage(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
-    // Incorrect measure word pairs - simplified list
-    let measure_word_pairs = [
-        (r"一只.{0,2}(桌子|椅子|床|柜子)", "一张"),
-        (r"一张.{0,2}(狗|猫|鸟|鱼|老虎)", "一只"),
-        (r"一个.{0,2}(报纸|杂志|书|地图)", "一份"),
-        (r"一条.{0,2}(裤子|裙子)", "一条"),
-        (r"一件.{0,2}(裤子|裙子)", "一条"),
-    ];
-
-    for (pattern, suggestion) in measure_word_pairs {
-        let regex = match Regex::new(pattern) {
-            Ok(re) => re,
-            Err(_) => continue, // Skip this pattern if regex creation fails
-        };
-
-        if let Some(mat) = regex.find(line) {
-            let matched_text = &line[mat.start()..mat.end()];
-            let wrong_measure = &matched_text[0..2]; // Extract incorrect measure word
-
-            issues.push(TextIssue {
-                line_number: line_idx + 1,
-                start: byte_to_char_index(line, mat.start()),
-                end: byte_to_char_index(line, mat.start() + 2),
-                issue_type: "量词搭配".to_string(),
-                message: format!("量词搭配不当: '{}'", matched_text),
-                suggestion: format!("建议使用: '{}' 替换 '{}'", suggestion, wrong_measure),
-            });
+        if issues.len() >= MAX_ISSUES {
+            return;
         }
     }
 }
 
 // Check Chinese "的得地" usage
 fn check_de_usage(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
+    // Skip if we've already found too many issues
+    if issues.len() >= MAX_ISSUES {
+        return;
+    }
+
     // Adjective + "地" + verb, like "快地跑"
     let de_di_regex =
         match Regex::new(r"[快慢高低大小好坏强弱深浅厚薄粗细长短宽窄][的][跑走看听说读写做想吃喝]")
@@ -422,6 +517,11 @@ fn check_de_usage(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
             message: "形容词后接动词应使用'地'而非'的'".to_string(),
             suggestion: "将'的'改为'地'".to_string(),
         });
+
+        // Stop if we've found too many issues
+        if issues.len() >= MAX_ISSUES {
+            return;
+        }
     }
 
     // Verb + "得" + adjective, like "跑得快"
@@ -441,28 +541,21 @@ fn check_de_usage(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
             message: "动词后接形容词应使用'得'而非'地'".to_string(),
             suggestion: "将'地'改为'得'".to_string(),
         });
-    }
 
-    // Noun + "的" + noun, like "我的书"
-    let de_de_regex = match Regex::new(r"[我你他她它们][得地][书包车房子]") {
-        Ok(re) => re,
-        Err(_) => return,
-    };
-
-    for mat in de_de_regex.find_iter(line) {
-        issues.push(TextIssue {
-            line_number: line_idx + 1,
-            start: byte_to_char_index(line, mat.start() + 1),
-            end: byte_to_char_index(line, mat.start() + 2),
-            issue_type: "语法错误".to_string(),
-            message: "名词之间的所属关系应使用'的'而非'得'或'地'".to_string(),
-            suggestion: "将'得'或'地'改为'的'".to_string(),
-        });
+        // Stop if we've found too many issues
+        if issues.len() >= MAX_ISSUES {
+            return;
+        }
     }
 }
 
 // Check common Chinese errors
 fn check_common_chinese_errors(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
+    // Skip if we've already found too many issues
+    if issues.len() >= MAX_ISSUES {
+        return;
+    }
+
     // Check "把" sentence missing object
     if line.contains("把") {
         let ba_regex = match Regex::new(r"把[^，。！？；：]*$") {
@@ -481,30 +574,15 @@ fn check_common_chinese_errors(line: &str, line_idx: usize, issues: &mut Vec<Tex
             });
         }
     }
-
-    // Check improper "是...的" structure
-    let shi_de_regex = match Regex::new(r"是.*的") {
-        Ok(re) => re,
-        Err(_) => return,
-    };
-
-    if let Some(mat) = shi_de_regex.find(line) {
-        let content = &line[mat.start()..mat.end()];
-        if content.len() > 20 && !content.contains("，") && !content.contains("。") {
-            issues.push(TextIssue {
-                line_number: line_idx + 1,
-                start: byte_to_char_index(line, mat.start()),
-                end: byte_to_char_index(line, mat.end()),
-                issue_type: "语法建议".to_string(),
-                message: "'是...的'结构过长，可能影响阅读流畅度".to_string(),
-                suggestion: "考虑拆分句子或重新组织句子结构".to_string(),
-            });
-        }
-    }
 }
 
 // Check English subject-verb agreement
 fn check_subject_verb_agreement(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
+    // Skip if we've already found too many issues
+    if issues.len() >= MAX_ISSUES {
+        return;
+    }
+
     // Simple subject-verb agreement check
     let singular_subjects = ["it", "he", "she", "this", "that"];
     let plural_verbs = ["are", "were", "have", "do"];
@@ -526,30 +604,11 @@ fn check_subject_verb_agreement(line: &str, line_idx: usize, issues: &mut Vec<Te
                     message: format!("主谓一致性错误: '{}' 与 '{}'", subject, verb),
                     suggestion: format!("对于单数主语 '{}' 应使用单数动词形式", subject),
                 });
-            }
-        }
-    }
 
-    let plural_subjects = ["they", "we", "these", "those"];
-    let singular_verbs = ["is", "was", "has", "does"];
-
-    for subject in plural_subjects.iter() {
-        for verb in singular_verbs.iter() {
-            let pattern = format!(r"\b{}\s+{}\b", subject, verb);
-            let regex = match Regex::new(&pattern) {
-                Ok(re) => re,
-                Err(_) => continue, // Skip this pattern if regex creation fails
-            };
-
-            if let Some(mat) = regex.find(line) {
-                issues.push(TextIssue {
-                    line_number: line_idx + 1,
-                    start: byte_to_char_index(line, mat.start()),
-                    end: byte_to_char_index(line, mat.end()),
-                    issue_type: "语法错误".to_string(),
-                    message: format!("主谓一致性错误: '{}' 与 '{}'", subject, verb),
-                    suggestion: format!("对于复数主语 '{}' 应使用复数动词形式", subject),
-                });
+                // Stop if we've found too many issues
+                if issues.len() >= MAX_ISSUES {
+                    return;
+                }
             }
         }
     }
@@ -557,6 +616,11 @@ fn check_subject_verb_agreement(line: &str, line_idx: usize, issues: &mut Vec<Te
 
 // Check English article usage
 fn check_article_usage(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
+    // Skip if we've already found too many issues
+    if issues.len() >= MAX_ISSUES {
+        return;
+    }
+
     // Check article before vowel-starting words
     let a_vowel_regex = match Regex::new(r"\ba\s+[aeiouAEIOU]\w+\b") {
         Ok(re) => re,
@@ -573,82 +637,44 @@ fn check_article_usage(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>)
             suggestion: "将'a'替换为'an'".to_string(),
         });
     }
-
-    // Check article before consonant-starting words
-    let an_consonant_regex =
-        match Regex::new(r"\ban\s+[bcdfghjklmnpqrstvwxyzBCDFGHJKLMNPQRSTVWXYZ]\w+\b") {
-            Ok(re) => re,
-            Err(_) => return,
-        };
-
-    if let Some(mat) = an_consonant_regex.find(line) {
-        issues.push(TextIssue {
-            line_number: line_idx + 1,
-            start: byte_to_char_index(line, mat.start()),
-            end: byte_to_char_index(line, mat.start() + 2),
-            issue_type: "冠词错误".to_string(),
-            message: "辅音开头的单词前应使用'a'而非'an'".to_string(),
-            suggestion: "将'an'替换为'a'".to_string(),
-        });
-    }
 }
 
-// Check common English grammar errors
-fn check_common_english_errors(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
-    // Check double negatives
-    let double_negatives = [
-        (r"\bdon't\s+have\s+no\b", "don't have any"),
-        (r"\bcan't\s+hardly\b", "can hardly"),
-        (r"\bwon't\s+be\s+no\b", "won't be any"),
-    ];
-
-    for (pattern, suggestion) in double_negatives {
-        let regex = match Regex::new(pattern) {
-            Ok(re) => re,
-            Err(_) => continue, // Skip this pattern if regex creation fails
-        };
-
-        if let Some(mat) = regex.find(line) {
-            issues.push(TextIssue {
-                line_number: line_idx + 1,
-                start: byte_to_char_index(line, mat.start()),
-                end: byte_to_char_index(line, mat.end()),
-                issue_type: "语法错误".to_string(),
-                message: "检测到双重否定".to_string(),
-                suggestion: format!("建议使用 '{}'", suggestion),
-            });
-        }
-    }
-
-    // Check common preposition errors
-    let preposition_errors = [
-        (r"\bdifferent\s+than\b", "different from"),
-        (r"\bin\s+regards\s+to\b", "regarding"),
-        (r"\bregardless\s+to\b", "regardless of"),
-    ];
-
-    for (pattern, suggestion) in preposition_errors {
-        let regex = match Regex::new(pattern) {
-            Ok(re) => re,
-            Err(_) => continue, // Skip this pattern if regex creation fails
-        };
-
-        if let Some(mat) = regex.find(line) {
-            issues.push(TextIssue {
-                line_number: line_idx + 1,
-                start: byte_to_char_index(line, mat.start()),
-                end: byte_to_char_index(line, mat.end()),
-                issue_type: "介词错误".to_string(),
-                message: "不正确的介词用法".to_string(),
-                suggestion: format!("建议使用 '{}'", suggestion),
-            });
-        }
-    }
-}
-
+// Read file content with streaming approach for large files
 #[tauri::command]
 fn read_file_content(path: &str) -> Result<String, String> {
-    std::fs::read_to_string(path).map_err(|e| e.to_string())
+    // Check if file exists
+    let path = Path::new(path);
+    if !path.exists() {
+        return Err(format!("文件不存在: {}", path.display()));
+    }
+
+    // Check file size
+    let metadata = match std::fs::metadata(path) {
+        Ok(meta) => meta,
+        Err(e) => return Err(format!("无法读取文件元数据: {}", e)),
+    };
+
+    // Check if file is too large
+    if metadata.len() > MAX_FILE_SIZE {
+        return Err(format!(
+            "文件过大，请选择小于{}MB的文件",
+            MAX_FILE_SIZE / 1_000_000
+        ));
+    }
+
+    // Read file content
+    match std::fs::read_to_string(path) {
+        Ok(content) => {
+            // If content is too large, truncate it
+            if content.len() > MAX_TEXT_LENGTH {
+                let truncated = content[0..MAX_TEXT_LENGTH].to_string();
+                Ok(truncated)
+            } else {
+                Ok(content)
+            }
+        }
+        Err(e) => Err(format!("读取文件失败: {}", e)),
+    }
 }
 
 // Auto-detect text language
@@ -675,9 +701,108 @@ fn detect_language(text: &str) -> String {
     }
 }
 
+// Process large file in chunks
+#[tauri::command]
+fn analyze_large_file(path: &str) -> Result<AnalysisResult, String> {
+    // Check if file exists
+    let path = Path::new(path);
+    if !path.exists() {
+        return Err(format!("文件不存在: {}", path.display()));
+    }
+
+    // Check file size
+    let metadata = match std::fs::metadata(path) {
+        Ok(meta) => meta,
+        Err(e) => return Err(format!("无法读取文件元数据: {}", e)),
+    };
+
+    // Check if file is too large
+    if metadata.len() > MAX_FILE_SIZE {
+        return Err(format!(
+            "文件过大，请选择小于{}MB的文件",
+            MAX_FILE_SIZE / 1_000_000
+        ));
+    }
+
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(e) => return Err(format!("无法打开文件: {}", e)),
+    };
+
+    let reader = BufReader::new(file);
+    let mut issues = Vec::new();
+    let mut stats = HashMap::new();
+    let mut truncated = false;
+
+    // Count statistics
+    let mut total_chars = 0;
+    let mut total_words = 0;
+    let mut total_lines = 0;
+
+    // Process file in chunks
+    let mut line_idx = 0;
+    let mut chunk = String::new();
+    let mut chunk_size = 0;
+
+    for line_result in reader.lines() {
+        match line_result {
+            Ok(line) => {
+                total_lines += 1;
+                total_chars += line.chars().count();
+                total_words += line.split_whitespace().count();
+
+                chunk.push_str(&line);
+                chunk.push('\n');
+                chunk_size += line.len() + 1;
+
+                // Process chunk when it reaches the limit
+                if chunk_size >= MAX_TEXT_LENGTH / 10 || issues.len() >= MAX_ISSUES {
+                    process_text_chunk(&chunk, line_idx, &mut issues, &mut truncated);
+                    line_idx += chunk.lines().count();
+                    chunk.clear();
+                    chunk_size = 0;
+
+                    // Stop if we've found too many issues
+                    if issues.len() >= MAX_ISSUES {
+                        truncated = true;
+                        break;
+                    }
+                }
+            }
+            Err(e) => return Err(format!("读取文件行时出错: {}", e)),
+        }
+    }
+
+    // Process remaining chunk
+    if !chunk.is_empty() && issues.len() < MAX_ISSUES {
+        process_text_chunk(&chunk, line_idx, &mut issues, &mut truncated);
+    }
+
+    // Update statistics
+    stats.insert("total_chars".to_string(), total_chars);
+    stats.insert("total_words".to_string(), total_words);
+    stats.insert("total_lines".to_string(), total_lines);
+
+    // Limit the number of issues returned
+    if issues.len() > MAX_ISSUES {
+        issues.truncate(MAX_ISSUES);
+        truncated = true;
+    }
+
+    Ok(AnalysisResult {
+        issues,
+        stats,
+        truncated,
+    })
+}
+
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![analyze_text, read_file_content])
+        .invoke_handler(tauri::generate_handler![
+            analyze_text,
+            read_file_content,
+            analyze_large_file
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

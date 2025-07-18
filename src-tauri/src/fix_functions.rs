@@ -1,9 +1,15 @@
 use crate::byte_to_char_index;
 use crate::TextIssue;
+use crate::MAX_ISSUES;
 use regex::Regex;
 
 // Check for idiom usage - moved from lib.rs to avoid duplication
 pub fn check_idiom_usage(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
+    // Skip if we've already found too many issues
+    if issues.len() >= MAX_ISSUES {
+        return;
+    }
+
     // Common incorrect idiom usages - simplified list
     let idiom_pairs = [
         ("一鸣惊动", "一鸣惊人", "错误用法，应为'一鸣惊人'"),
@@ -29,6 +35,11 @@ pub fn check_idiom_usage(line: &str, line_idx: usize, issues: &mut Vec<TextIssue
                     message: format!("成语使用错误: '{}'", wrong_idiom),
                     suggestion: format!("应使用: '{}'，{}", correct_idiom, explanation),
                 });
+
+                // Stop if we've found too many issues
+                if issues.len() >= MAX_ISSUES {
+                    return;
+                }
             }
         }
     }
@@ -41,6 +52,11 @@ pub fn check_academic_style(
     issues: &mut Vec<TextIssue>,
     language: &str,
 ) {
+    // Skip if we've already found too many issues
+    if issues.len() >= MAX_ISSUES {
+        return;
+    }
+
     if language == "en" {
         // Check for informal contractions in English academic writing
         let contractions = [
@@ -70,6 +86,11 @@ pub fn check_academic_style(
                     message: "学术写作中应避免使用缩写形式".to_string(),
                     suggestion: format!("使用完整形式: '{}'", full_form),
                 });
+
+                // Stop if we've found too many issues
+                if issues.len() >= MAX_ISSUES {
+                    return;
+                }
             }
         }
 
@@ -90,6 +111,11 @@ pub fn check_academic_style(
                     message: "正式学术写作中应避免使用第一人称代词".to_string(),
                     suggestion: "考虑使用被动语态或更客观的表达方式".to_string(),
                 });
+
+                // Stop if we've found too many issues
+                if issues.len() >= MAX_ISSUES {
+                    return;
+                }
             }
         }
     } else if language == "zh" {
@@ -117,6 +143,11 @@ pub fn check_academic_style(
                         message: format!("非正式表达: '{}'", informal),
                         suggestion: format!("考虑使用更正式的表达: '{}'", formal),
                     });
+
+                    // Stop if we've found too many issues
+                    if issues.len() >= MAX_ISSUES {
+                        return;
+                    }
                 }
             }
         }
@@ -134,6 +165,11 @@ pub fn check_academic_style(
                         message: "正式学术写作中应避免使用第一人称代词".to_string(),
                         suggestion: "考虑使用被动语态或更客观的表达方式".to_string(),
                     });
+
+                    // Stop if we've found too many issues
+                    if issues.len() >= MAX_ISSUES {
+                        return;
+                    }
                 }
             }
         }
@@ -147,6 +183,11 @@ pub fn check_sentence_length(
     issues: &mut Vec<TextIssue>,
     language: &str,
 ) {
+    // Skip if we've already found too many issues
+    if issues.len() >= MAX_ISSUES {
+        return;
+    }
+
     // Define maximum recommended sentence length (in characters)
     let max_length = if language == "zh" { 100 } else { 200 };
 
@@ -176,6 +217,11 @@ pub fn check_sentence_length(
                         message: format!("句子过长 ({} 字符)", sentence_length),
                         suggestion: "考虑将长句拆分为多个短句，以提高可读性".to_string(),
                     });
+
+                    // Stop if we've found too many issues
+                    if issues.len() >= MAX_ISSUES {
+                        return;
+                    }
                 }
 
                 in_sentence = false;
@@ -201,6 +247,11 @@ pub fn check_sentence_length(
 
 // Check for citation format consistency
 pub fn check_citation_format(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
+    // Skip if we've already found too many issues
+    if issues.len() >= MAX_ISSUES {
+        return;
+    }
+
     // Check for different citation formats in the same line
     let apa_citation = match Regex::new(r"\([A-Za-z]+,\s+\d{4}\)") {
         Ok(re) => re,
@@ -241,6 +292,11 @@ pub fn check_citation_format(line: &str, line_idx: usize, issues: &mut Vec<TextI
             message: "同一行中存在不同的引用格式".to_string(),
             suggestion: "请统一使用一种引用格式（如APA、MLA、Chicago或IEEE）".to_string(),
         });
+
+        // Stop if we've found too many issues
+        if issues.len() >= MAX_ISSUES {
+            return;
+        }
     }
 
     // Check for potential citation errors - simplified
@@ -272,6 +328,11 @@ pub fn check_citation_format(line: &str, line_idx: usize, issues: &mut Vec<TextI
                 message: message.to_string(),
                 suggestion: suggestion.to_string(),
             });
+
+            // Stop if we've found too many issues
+            if issues.len() >= MAX_ISSUES {
+                return;
+            }
         }
     }
 }

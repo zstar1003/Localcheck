@@ -1,9 +1,15 @@
 use crate::byte_to_char_index;
 use crate::TextIssue;
+use crate::MAX_ISSUES;
 use regex::Regex;
 
 // Check for word order issues in Chinese
 pub fn check_word_order(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
+    // Skip if we've already found too many issues
+    if issues.len() >= MAX_ISSUES {
+        return;
+    }
+
     // Common word order issues in Chinese
     let word_order_patterns = [
         (r"不仅没有.+也没有", "不仅没有...而且没有", "搭配不当"),
@@ -27,12 +33,22 @@ pub fn check_word_order(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>
                 message: format!("语序结构: {}", mat.as_str()),
                 suggestion: format!("建议使用: {}, {}", correct_form, explanation),
             });
+
+            // Stop if we've found too many issues
+            if issues.len() >= MAX_ISSUES {
+                return;
+            }
         }
     }
 }
 
 // Check for Chinese punctuation issues
 pub fn check_chinese_punctuation(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
+    // Skip if we've already found too many issues
+    if issues.len() >= MAX_ISSUES {
+        return;
+    }
+
     // Check for consecutive identical punctuation
     let consecutive_punct_regex = match Regex::new(r"[，。！？；：、]{2,}") {
         Ok(re) => re,
@@ -48,6 +64,11 @@ pub fn check_chinese_punctuation(line: &str, line_idx: usize, issues: &mut Vec<T
             message: "连续使用相同的标点符号".to_string(),
             suggestion: "使用单个标点符号".to_string(),
         });
+
+        // Stop if we've found too many issues
+        if issues.len() >= MAX_ISSUES {
+            return;
+        }
     }
 
     // Check for unpaired brackets
@@ -67,6 +88,11 @@ pub fn check_chinese_punctuation(line: &str, line_idx: usize, issues: &mut Vec<T
 
 // Check for tense consistency in English
 pub fn check_tense_consistency(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
+    // Skip if we've already found too many issues
+    if issues.len() >= MAX_ISSUES {
+        return;
+    }
+
     // Past tense markers
     let past_tense_markers = [
         "yesterday",
@@ -98,6 +124,11 @@ pub fn check_tense_consistency(line: &str, line_idx: usize, issues: &mut Vec<Tex
                         message: "过去时间标记与现在时态动词".to_string(),
                         suggestion: "使用过去时态动词".to_string(),
                     });
+
+                    // Stop if we've found too many issues
+                    if issues.len() >= MAX_ISSUES {
+                        return;
+                    }
                 }
             }
         }
@@ -106,6 +137,11 @@ pub fn check_tense_consistency(line: &str, line_idx: usize, issues: &mut Vec<Tex
 
 // Check for preposition usage in English
 pub fn check_preposition_usage(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
+    // Skip if we've already found too many issues
+    if issues.len() >= MAX_ISSUES {
+        return;
+    }
+
     // Common preposition errors
     let preposition_errors = [
         (r"\bdifferent to\b", "different from", "不正确的介词搭配"),
@@ -128,6 +164,11 @@ pub fn check_preposition_usage(line: &str, line_idx: usize, issues: &mut Vec<Tex
                 message: format!("介词用法不当: {}", mat.as_str()),
                 suggestion: format!("建议使用: {}, {}", correct_form, explanation),
             });
+
+            // Stop if we've found too many issues
+            if issues.len() >= MAX_ISSUES {
+                return;
+            }
         }
     }
 }
