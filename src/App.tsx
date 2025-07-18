@@ -24,7 +24,7 @@ function App() {
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
   const [selectedIssue, setSelectedIssue] = useState<TextIssue | null>(null);
-  const [tooltipPosition, setTooltipPosition] = useState<{ top: number; left: number } | null>(null);
+  // Removed unused tooltipPosition state
   const editorRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -276,19 +276,7 @@ function App() {
         </div>
       </div>
 
-      {tooltipPosition && selectedIssue && (
-        <div 
-          className="tooltip" 
-          style={{ 
-            top: tooltipPosition.top, 
-            left: tooltipPosition.left 
-          }}
-        >
-          <div className="tooltip-header">{selectedIssue.issue_type}</div>
-          <div>{selectedIssue.message}</div>
-          <div className="tooltip-suggestion">{selectedIssue.suggestion}</div>
-        </div>
-      )}
+      {/* Tooltip removed as it's not being used */}
     </div>
   );
 }

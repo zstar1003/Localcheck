@@ -2,6 +2,10 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+// Import our grammar checking modules
+mod fix_functions;
+mod grammar_check;
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TextIssue {
     line_number: usize,
@@ -12,7 +16,7 @@ pub struct TextIssue {
     suggestion: String,
 }
 
-// 将字节索引转换为字符索引
+// Convert byte index to character index
 fn byte_to_char_index(s: &str, byte_idx: usize) -> usize {
     s[..byte_idx.min(s.len())].chars().count()
 }
@@ -28,7 +32,7 @@ fn analyze_text(text: &str) -> AnalysisResult {
     let mut issues = Vec::new();
     let mut stats = HashMap::new();
 
-    // 计算基本统计信息
+    // Calculate basic statistics
     let total_chars = text.chars().count();
     let total_words = text.split_whitespace().count();
     let total_lines = text.lines().count();
@@ -37,28 +41,37 @@ fn analyze_text(text: &str) -> AnalysisResult {
     stats.insert("total_words".to_string(), total_words);
     stats.insert("total_lines".to_string(), total_lines);
 
-    // 分析每一行
+    // Analyze each line
     for (line_idx, line) in text.lines().enumerate() {
-        // 自动检测当前行的语言
+        // Auto-detect language for the current line
         let line_language = detect_language(line);
 
-        // 检查重复词
+        // Check for repeated words
         check_repeated_words(line, line_idx, &mut issues);
 
-        // 检查标点符号使用
+        // Check punctuation usage
         check_punctuation(line, line_idx, &mut issues);
 
-        // 检查被动语态 (简化版)
+        // Check passive voice (simplified)
         check_passive_voice(line, line_idx, &mut issues, &line_language);
 
-        // 检查冗余表达
+        // Check redundant expressions
         check_redundant_expressions(line, line_idx, &mut issues, &line_language);
 
-        // 检查常见错别字
+        // Check common typos
         check_common_typos(line, line_idx, &mut issues, &line_language);
 
-        // 检查语法问题
+        // Check grammar issues
         check_grammar_issues(line, line_idx, &mut issues, &line_language);
+
+        // Check academic writing style
+        fix_functions::check_academic_style(line, line_idx, &mut issues, &line_language);
+
+        // Check sentence length
+        fix_functions::check_sentence_length(line, line_idx, &mut issues, &line_language);
+
+        // Check citation format
+        fix_functions::check_citation_format(line, line_idx, &mut issues);
     }
 
     AnalysisResult { issues, stats }
@@ -69,22 +82,22 @@ fn check_repeated_words(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>
 
     for i in 0..words.len().saturating_sub(1) {
         if words[i].len() > 3 && words[i] == words[i + 1] {
-            // 查找第一个单词的位置
+            // Find position of first word
             let first_word_pos = match line.find(words[i]) {
                 Some(pos) => pos,
-                None => continue, // 如果找不到单词，跳过这个检查
+                None => continue, // Skip if word not found
             };
 
-            // 查找第二个单词的位置（从第一个单词之后开始查找）
+            // Find position of second word (starting after first word)
             let second_word_pos = match line[first_word_pos + words[i].len()..].find(words[i]) {
                 Some(pos) => first_word_pos + words[i].len() + pos,
-                None => continue, // 如果找不到第二个单词，跳过这个检查
+                None => continue, // Skip if second word not found
             };
 
-            // 确保两个单词之间只有空白字符
+            // Ensure only whitespace between words
             let between_text = &line[first_word_pos + words[i].len()..second_word_pos];
             if !between_text.trim().is_empty() {
-                continue; // 如果两个单词之间有非空白字符，跳过这个检查
+                continue; // Skip if non-whitespace between words
             }
 
             issues.push(TextIssue {
@@ -100,11 +113,24 @@ fn check_repeated_words(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>
 }
 
 fn check_punctuation(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
-    // 检查中英文标点混用
-    let cn_punct_regex = Regex::new(r#"[，。！？；：""''（）【】「」『』〈〉《》]"#).unwrap();
-    let en_punct_regex = Regex::new(r#"[,.!?;:"'()\[\]<>]"#).unwrap();
+    // Check for mixed Chinese and English punctuation
+    // Use individual character checks instead of regex for Chinese punctuation
+    let has_chinese_punct = line.contains('，')
+        || line.contains('。')
+        || line.contains('！')
+        || line.contains('？')
+        || line.contains('；')
+        || line.contains('：');
 
-    if cn_punct_regex.is_match(line) && en_punct_regex.is_match(line) {
+    // Use a simpler regex for English punctuation to avoid escaping issues
+    let en_punct_regex = match Regex::new(r"[,.!?;:]") {
+        Ok(re) => re,
+        Err(_) => return,
+    };
+
+    let has_english_punct = en_punct_regex.is_match(line);
+
+    if has_chinese_punct && has_english_punct {
         issues.push(TextIssue {
             line_number: line_idx + 1,
             start: 0,
@@ -115,8 +141,12 @@ fn check_punctuation(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
         });
     }
 
-    // 检查连续标点
-    let consecutive_punct_regex = Regex::new(r"[,.!?;:]{2,}").unwrap();
+    // Check for consecutive punctuation
+    let consecutive_punct_regex = match Regex::new(r"[,.!?;:]{2,}") {
+        Ok(re) => re,
+        Err(_) => return,
+    };
+
     if let Some(mat) = consecutive_punct_regex.find(line) {
         issues.push(TextIssue {
             line_number: line_idx + 1,
@@ -131,7 +161,7 @@ fn check_punctuation(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
 
 fn check_passive_voice(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>, language: &str) {
     if language == "zh" {
-        // 中文被动语态检测 (简化版)
+        // Chinese passive voice detection (simplified)
         let passive_markers = ["被", "受到", "遭到", "遭受"];
 
         for marker in passive_markers {
@@ -147,13 +177,13 @@ fn check_passive_voice(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>,
             }
         }
     } else {
-        // 英文被动语态检测 (简化版)
+        // English passive voice detection (simplified)
         let be_verbs = ["is", "are", "was", "were", "be", "been", "being"];
         let past_participles = ["ed", "en", "t"];
 
         for be_verb in be_verbs {
             if let Some(pos) = line.to_lowercase().find(be_verb) {
-                // 简单检查后面是否跟着过去分词
+                // Simple check for past participle after be verb
                 let after_be = &line[pos + be_verb.len()..];
                 let words_after: Vec<&str> = after_be.split_whitespace().collect();
 
@@ -227,16 +257,16 @@ fn check_redundant_expressions(
 }
 
 fn check_common_typos(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>, language: &str) {
-    // 中文重复字符检测
+    // Chinese repeated character detection
     if language == "zh" {
-        // 检测连续重复的单字符
+        // Detect consecutive repeated single characters
         let chars: Vec<char> = line.chars().collect();
         let mut i = 0;
         while i < chars.len().saturating_sub(1) {
             if chars[i] == chars[i + 1] && chars[i] >= '\u{4e00}' && chars[i] <= '\u{9fff}' {
-                // 是中文字符且连续重复
+                // Chinese character repeated consecutively
 
-                // 计算字符在原始字符串中的字节位置
+                // Calculate byte position of character in original string
                 let start_byte_pos = line.char_indices().nth(i).map(|(pos, _)| pos).unwrap_or(0);
 
                 let end_byte_pos = line
@@ -254,13 +284,13 @@ fn check_common_typos(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>, 
                     suggestion: format!("删除重复的 '{}'", chars[i]),
                 });
 
-                i += 2; // 跳过已检测的重复字符
+                i += 2; // Skip detected repeated characters
             } else {
                 i += 1;
             }
         }
     } else {
-        // 英文常见错别字检测
+        // English common typo detection - simplified list
         let typos: HashMap<&str, &str> = [
             ("teh", "the"),
             ("recieve", "receive"),
@@ -272,44 +302,18 @@ fn check_common_typos(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>, 
             ("untill", "until"),
             ("wich", "which"),
             ("recieved", "received"),
-            ("accomodate", "accommodate"),
-            ("adress", "address"),
-            ("beleive", "believe"),
-            ("concious", "conscious"),
-            ("existance", "existence"),
-            ("goverment", "government"),
-            ("independant", "independent"),
-            ("liason", "liaison"),
-            ("neccessary", "necessary"),
-            ("occassion", "occasion"),
-            ("occassionally", "occasionally"),
-            ("persistant", "persistent"),
-            ("posession", "possession"),
-            ("publically", "publicly"),
-            ("reccomend", "recommend"),
-            ("relevent", "relevant"),
-            ("religous", "religious"),
-            ("rythm", "rhythm"),
-            ("sieze", "seize"),
-            ("sincerly", "sincerely"),
-            ("supercede", "supersede"),
-            ("tommorrow", "tomorrow"),
-            ("twelth", "twelfth"),
-            ("tyrany", "tyranny"),
-            ("underate", "underrate"),
-            ("untill", "until"),
-            ("wether", "whether"),
-            ("withhold", "withhold"),
-            ("writting", "writing"),
         ]
         .iter()
         .cloned()
         .collect();
 
         for (typo, correction) in typos {
-            // 使用正则表达式匹配整个单词
+            // Use regex to match whole word
             let pattern = format!(r"\b{}\b", typo);
-            let regex = Regex::new(&pattern).unwrap();
+            let regex = match Regex::new(&pattern) {
+                Ok(re) => re,
+                Err(_) => continue, // Skip this pattern if regex creation fails
+            };
 
             for mat in regex.find_iter(line) {
                 issues.push(TextIssue {
@@ -327,33 +331,88 @@ fn check_common_typos(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>, 
 
 fn check_grammar_issues(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>, language: &str) {
     if language == "zh" {
-        // 中文语法检查
+        // Chinese grammar checks
 
-        // 检查"的得地"用法
+        // Check "的得地" usage
         check_de_usage(line, line_idx, issues);
 
-        // 检查常见病句
+        // Check common Chinese errors
         check_common_chinese_errors(line, line_idx, issues);
-    } else {
-        // 英文语法检查
 
-        // 检查主谓一致
+        // Check measure word usage
+        check_measure_word_usage(line, line_idx, issues);
+
+        // Check idiom usage
+        fix_functions::check_idiom_usage(line, line_idx, issues);
+
+        // Check word order issues
+        grammar_check::check_word_order(line, line_idx, issues);
+
+        // Check punctuation usage
+        grammar_check::check_chinese_punctuation(line, line_idx, issues);
+    } else {
+        // English grammar checks
+
+        // Check subject-verb agreement
         check_subject_verb_agreement(line, line_idx, issues);
 
-        // 检查冠词使用
+        // Check article usage
         check_article_usage(line, line_idx, issues);
 
-        // 检查常见语法错误
+        // Check tense consistency
+        grammar_check::check_tense_consistency(line, line_idx, issues);
+
+        // Check preposition usage
+        grammar_check::check_preposition_usage(line, line_idx, issues);
+
+        // Check common English errors
         check_common_english_errors(line, line_idx, issues);
     }
 }
 
-// 检查中文"的得地"用法
+// Check Chinese measure word usage
+fn check_measure_word_usage(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
+    // Incorrect measure word pairs - simplified list
+    let measure_word_pairs = [
+        (r"一只.{0,2}(桌子|椅子|床|柜子)", "一张"),
+        (r"一张.{0,2}(狗|猫|鸟|鱼|老虎)", "一只"),
+        (r"一个.{0,2}(报纸|杂志|书|地图)", "一份"),
+        (r"一条.{0,2}(裤子|裙子)", "一条"),
+        (r"一件.{0,2}(裤子|裙子)", "一条"),
+    ];
+
+    for (pattern, suggestion) in measure_word_pairs {
+        let regex = match Regex::new(pattern) {
+            Ok(re) => re,
+            Err(_) => continue, // Skip this pattern if regex creation fails
+        };
+
+        if let Some(mat) = regex.find(line) {
+            let matched_text = &line[mat.start()..mat.end()];
+            let wrong_measure = &matched_text[0..2]; // Extract incorrect measure word
+
+            issues.push(TextIssue {
+                line_number: line_idx + 1,
+                start: byte_to_char_index(line, mat.start()),
+                end: byte_to_char_index(line, mat.start() + 2),
+                issue_type: "量词搭配".to_string(),
+                message: format!("量词搭配不当: '{}'", matched_text),
+                suggestion: format!("建议使用: '{}' 替换 '{}'", suggestion, wrong_measure),
+            });
+        }
+    }
+}
+
+// Check Chinese "的得地" usage
 fn check_de_usage(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
-    // 形容词+地+动词，如"快地跑"
+    // Adjective + "地" + verb, like "快地跑"
     let de_di_regex =
-        Regex::new(r"[快慢高低大小好坏强弱深浅厚薄粗细长短宽窄][的][跑走看听说读写做想吃喝]")
-            .unwrap();
+        match Regex::new(r"[快慢高低大小好坏强弱深浅厚薄粗细长短宽窄][的][跑走看听说读写做想吃喝]")
+        {
+            Ok(re) => re,
+            Err(_) => return, // Return early if regex creation fails
+        };
+
     for mat in de_di_regex.find_iter(line) {
         issues.push(TextIssue {
             line_number: line_idx + 1,
@@ -365,10 +424,14 @@ fn check_de_usage(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
         });
     }
 
-    // 动词+得+形容词，如"跑得快"
+    // Verb + "得" + adjective, like "跑得快"
     let de_de_regex =
-        Regex::new(r"[跑走看听说读写做想吃喝][地][快慢高低大小好坏强弱深浅厚薄粗细长短宽窄]")
-            .unwrap();
+        match Regex::new(r"[跑走看听说读写做想吃喝][地][快慢高低大小好坏强弱深浅厚薄粗细长短宽窄]")
+        {
+            Ok(re) => re,
+            Err(_) => return,
+        };
+
     for mat in de_de_regex.find_iter(line) {
         issues.push(TextIssue {
             line_number: line_idx + 1,
@@ -379,13 +442,34 @@ fn check_de_usage(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
             suggestion: "将'地'改为'得'".to_string(),
         });
     }
+
+    // Noun + "的" + noun, like "我的书"
+    let de_de_regex = match Regex::new(r"[我你他她它们][得地][书包车房子]") {
+        Ok(re) => re,
+        Err(_) => return,
+    };
+
+    for mat in de_de_regex.find_iter(line) {
+        issues.push(TextIssue {
+            line_number: line_idx + 1,
+            start: byte_to_char_index(line, mat.start() + 1),
+            end: byte_to_char_index(line, mat.start() + 2),
+            issue_type: "语法错误".to_string(),
+            message: "名词之间的所属关系应使用'的'而非'得'或'地'".to_string(),
+            suggestion: "将'得'或'地'改为'的'".to_string(),
+        });
+    }
 }
 
-// 检查中文常见病句
+// Check common Chinese errors
 fn check_common_chinese_errors(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
-    // 检查"把"字句缺少宾语
+    // Check "把" sentence missing object
     if line.contains("把") {
-        let ba_regex = Regex::new(r"把[^，。！？；：]*$").unwrap();
+        let ba_regex = match Regex::new(r"把[^，。！？；：]*$") {
+            Ok(re) => re,
+            Err(_) => return, // Return early if regex creation fails
+        };
+
         if let Some(mat) = ba_regex.find(line) {
             issues.push(TextIssue {
                 line_number: line_idx + 1,
@@ -398,8 +482,12 @@ fn check_common_chinese_errors(line: &str, line_idx: usize, issues: &mut Vec<Tex
         }
     }
 
-    // 检查"是...的"结构不当
-    let shi_de_regex = Regex::new(r"是.*的").unwrap();
+    // Check improper "是...的" structure
+    let shi_de_regex = match Regex::new(r"是.*的") {
+        Ok(re) => re,
+        Err(_) => return,
+    };
+
     if let Some(mat) = shi_de_regex.find(line) {
         let content = &line[mat.start()..mat.end()];
         if content.len() > 20 && !content.contains("，") && !content.contains("。") {
@@ -415,16 +503,19 @@ fn check_common_chinese_errors(line: &str, line_idx: usize, issues: &mut Vec<Tex
     }
 }
 
-// 检查英文主谓一致
+// Check English subject-verb agreement
 fn check_subject_verb_agreement(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
-    // 简单的主谓一致检查
+    // Simple subject-verb agreement check
     let singular_subjects = ["it", "he", "she", "this", "that"];
     let plural_verbs = ["are", "were", "have", "do"];
 
     for subject in singular_subjects.iter() {
         for verb in plural_verbs.iter() {
             let pattern = format!(r"\b{}\s+{}\b", subject, verb);
-            let regex = Regex::new(&pattern).unwrap();
+            let regex = match Regex::new(&pattern) {
+                Ok(re) => re,
+                Err(_) => continue, // Skip this pattern if regex creation fails
+            };
 
             if let Some(mat) = regex.find(line) {
                 issues.push(TextIssue {
@@ -445,7 +536,10 @@ fn check_subject_verb_agreement(line: &str, line_idx: usize, issues: &mut Vec<Te
     for subject in plural_subjects.iter() {
         for verb in singular_verbs.iter() {
             let pattern = format!(r"\b{}\s+{}\b", subject, verb);
-            let regex = Regex::new(&pattern).unwrap();
+            let regex = match Regex::new(&pattern) {
+                Ok(re) => re,
+                Err(_) => continue, // Skip this pattern if regex creation fails
+            };
 
             if let Some(mat) = regex.find(line) {
                 issues.push(TextIssue {
@@ -461,10 +555,14 @@ fn check_subject_verb_agreement(line: &str, line_idx: usize, issues: &mut Vec<Te
     }
 }
 
-// 检查英文冠词使用
+// Check English article usage
 fn check_article_usage(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
-    // 检查元音开头单词前的冠词
-    let a_vowel_regex = Regex::new(r"\ba\s+[aeiouAEIOU]\w+\b").unwrap();
+    // Check article before vowel-starting words
+    let a_vowel_regex = match Regex::new(r"\ba\s+[aeiouAEIOU]\w+\b") {
+        Ok(re) => re,
+        Err(_) => return, // Return early if regex creation fails
+    };
+
     if let Some(mat) = a_vowel_regex.find(line) {
         issues.push(TextIssue {
             line_number: line_idx + 1,
@@ -476,9 +574,13 @@ fn check_article_usage(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>)
         });
     }
 
-    // 检查辅音开头单词前的冠词
+    // Check article before consonant-starting words
     let an_consonant_regex =
-        Regex::new(r"\ban\s+[bcdfghjklmnpqrstvwxyzBCDFGHJKLMNPQRSTVWXYZ]\w+\b").unwrap();
+        match Regex::new(r"\ban\s+[bcdfghjklmnpqrstvwxyzBCDFGHJKLMNPQRSTVWXYZ]\w+\b") {
+            Ok(re) => re,
+            Err(_) => return,
+        };
+
     if let Some(mat) = an_consonant_regex.find(line) {
         issues.push(TextIssue {
             line_number: line_idx + 1,
@@ -491,20 +593,21 @@ fn check_article_usage(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>)
     }
 }
 
-// 检查英文常见语法错误
+// Check common English grammar errors
 fn check_common_english_errors(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
-    // 检查双重否定
+    // Check double negatives
     let double_negatives = [
         (r"\bdon't\s+have\s+no\b", "don't have any"),
         (r"\bcan't\s+hardly\b", "can hardly"),
         (r"\bwon't\s+be\s+no\b", "won't be any"),
-        (r"\bdidn't\s+have\s+no\b", "didn't have any"),
-        (r"\bwouldn't\s+never\b", "wouldn't ever"),
-        (r"\bcouldn't\s+barely\b", "could barely"),
     ];
 
     for (pattern, suggestion) in double_negatives {
-        let regex = Regex::new(pattern).unwrap();
+        let regex = match Regex::new(pattern) {
+            Ok(re) => re,
+            Err(_) => continue, // Skip this pattern if regex creation fails
+        };
+
         if let Some(mat) = regex.find(line) {
             issues.push(TextIssue {
                 line_number: line_idx + 1,
@@ -517,18 +620,19 @@ fn check_common_english_errors(line: &str, line_idx: usize, issues: &mut Vec<Tex
         }
     }
 
-    // 检查常见介词搭配错误
+    // Check common preposition errors
     let preposition_errors = [
         (r"\bdifferent\s+than\b", "different from"),
         (r"\bin\s+regards\s+to\b", "regarding"),
-        (r"\bin\s+the\s+year\s+of\b", "in the year"),
         (r"\bregardless\s+to\b", "regardless of"),
-        (r"\bsimilar\s+than\b", "similar to"),
-        (r"\bsuperior\s+than\b", "superior to"),
     ];
 
     for (pattern, suggestion) in preposition_errors {
-        let regex = Regex::new(pattern).unwrap();
+        let regex = match Regex::new(pattern) {
+            Ok(re) => re,
+            Err(_) => continue, // Skip this pattern if regex creation fails
+        };
+
         if let Some(mat) = regex.find(line) {
             issues.push(TextIssue {
                 line_number: line_idx + 1,
@@ -547,23 +651,23 @@ fn read_file_content(path: &str) -> Result<String, String> {
     std::fs::read_to_string(path).map_err(|e| e.to_string())
 }
 
-// 自动检测文本语言
+// Auto-detect text language
 fn detect_language(text: &str) -> String {
-    // 计算中文字符和英文字符的数量
+    // Count Chinese and English characters
     let mut chinese_count = 0;
     let mut english_count = 0;
 
     for c in text.chars() {
         if c >= '\u{4e00}' && c <= '\u{9fff}' {
-            // 中文字符范围
+            // Chinese character range
             chinese_count += 1;
         } else if c.is_ascii_alphabetic() {
-            // 英文字母
+            // English letters
             english_count += 1;
         }
     }
 
-    // 根据字符数量判断语言
+    // Determine language based on character count
     if chinese_count > english_count {
         "zh".to_string()
     } else {
