@@ -5,8 +5,9 @@ use crate::TextIssue;
 use crate::MAX_ISSUES;
 use std::collections::HashSet;
 
-// 查找完整单词的位置，确保不会匹配到单词的一部分
-pub fn find_whole_word(text: &str, word: &str) -> Option<usize> {
+// 查找完整单词的所有位置，确保不会匹配到单词的一部分
+pub fn find_all_whole_words(text: &str, word: &str) -> Vec<usize> {
+    let mut positions = Vec::new();
     let mut start_idx = 0;
 
     while let Some(pos) = text[start_idx..].find(word) {
@@ -26,25 +27,40 @@ pub fn find_whole_word(text: &str, word: &str) -> Option<usize> {
                 .map_or(false, |c| c.is_alphanumeric());
 
         if is_start_boundary && is_end_boundary {
-            return Some(actual_pos);
+            positions.push(actual_pos);
         }
 
         // 继续查找下一个匹配
         start_idx = actual_pos + 1;
     }
 
-    None
+    positions
+}
+
+// 查找完整单词的第一个位置，确保不会匹配到单词的一部分
+pub fn find_whole_word(text: &str, word: &str) -> Option<usize> {
+    find_all_whole_words(text, word).into_iter().next()
 }
 
 // 改进的拼写检查函数，使用词典
-pub fn check_spelling(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
+pub fn check_spelling(
+    line: &str,
+    line_idx: usize,
+    issues: &mut Vec<TextIssue>,
+    global_detected_words: &mut HashSet<String>,
+) {
     // Skip if we've already found too many issues
     if issues.len() >= MAX_ISSUES {
         return;
     }
 
     // 用于跟踪已经检测到的错误，避免重复提示
-    let mut detected_errors = HashSet::new();
+    // 使用小写形式作为键，确保不区分大小写
+    let mut detected_errors = HashSet::<String>::new();
+
+    // 用于跟踪已经检测到的错误词根，避免重复提示相同词根的不同形式
+    // 例如，如果已经检测到 "Corporate"，就不再检测 "corporate" 或 "CORPORATE"
+    let mut detected_word_roots = HashSet::<String>::new();
 
     // 首先，将行分割成单词（使用更精确的分割方法）
     let words: Vec<&str> = line
@@ -58,26 +74,41 @@ pub fn check_spelling(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) 
 
     // 检查每个完整单词
     for word in words {
-        // 跳过已经检测到的错误
-        if detected_errors.contains(word) {
+        // 跳过已经检测到的错误（精确匹配）
+        if detected_errors.contains(word) || global_detected_words.contains(&word.to_string()) {
+            continue;
+        }
+
+        // 跳过已经检测到的错误词根（不区分大小写）
+        let word_lower = word.to_lowercase();
+        if detected_word_roots.contains(&word_lower) || global_detected_words.contains(&word_lower)
+        {
             continue;
         }
 
         // 检查单词是否在拼写错误字典中
         if let Some(correction) = spelling_dict::check_word_spelling(word) {
-            // 找到单词在原始行中的位置（确保是完整单词）
-            if let Some(pos) = find_whole_word(line, word) {
+            // 找到单词在原始行中的所有位置（确保是完整单词）
+            let positions = find_all_whole_words(line, word);
+
+            // 只报告第一个位置的错误，避免重复报告
+            if let Some(pos) = positions.first() {
                 issues.push(TextIssue {
                     line_number: line_idx + 1,
-                    start: byte_to_char_index(line, pos),
-                    end: byte_to_char_index(line, pos + word.len()),
+                    start: byte_to_char_index(line, *pos),
+                    end: byte_to_char_index(line, *pos + word.len()),
                     issue_type: "拼写错误".to_string(),
                     message: format!("可能的拼写错误: '{}'", word),
                     suggestion: format!("建议修改为: '{}'", correction),
                 });
 
                 // 添加到已检测集合
-                detected_errors.insert(word);
+                detected_errors.insert(word.to_string());
+                detected_word_roots.insert(word_lower.clone());
+
+                // 添加到全局检测集合
+                global_detected_words.insert(word.to_string());
+                global_detected_words.insert(word_lower.clone());
 
                 // Stop if we've found too many issues
                 if issues.len() >= MAX_ISSUES {
@@ -128,7 +159,7 @@ pub fn check_spelling(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) 
                 });
 
                 // 添加到已检测集合
-                detected_errors.insert(word);
+                detected_errors.insert(word.to_string());
 
                 // Stop if we've found too many issues
                 if issues.len() >= MAX_ISSUES {
@@ -139,7 +170,14 @@ pub fn check_spelling(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) 
     }
 
     // 特别检查标题中的错误
-    check_title_errors(line, line_idx, issues, &mut detected_errors);
+    check_title_errors(
+        line,
+        line_idx,
+        issues,
+        &mut detected_errors,
+        &mut detected_word_roots,
+        global_detected_words,
+    );
 }
 
 // 特别检查标题中的错误
@@ -147,7 +185,9 @@ fn check_title_errors(
     line: &str,
     line_idx: usize,
     issues: &mut Vec<TextIssue>,
-    detected_errors: &mut HashSet<&str>,
+    detected_errors: &mut HashSet<String>,
+    detected_word_roots: &mut HashSet<String>,
+    global_detected_words: &mut HashSet<String>,
 ) {
     // 特别针对您示例中的错误
     let example_errors = [
@@ -167,56 +207,92 @@ fn check_title_errors(
             continue;
         }
 
-        // 尝试查找完整单词
-        if let Some(pos) = find_whole_word(line, error) {
+        // 检查词根是否已经被检测过（不区分大小写）
+        let error_lower = error.to_lowercase();
+        if detected_word_roots.contains(&error_lower) {
+            continue;
+        }
+
+        // 尝试查找完整单词的所有位置
+        let positions = find_all_whole_words(line, error);
+        if let Some(pos) = positions.first() {
             issues.push(TextIssue {
                 line_number: line_idx + 1,
-                start: byte_to_char_index(line, pos),
-                end: byte_to_char_index(line, pos + error.len()),
+                start: byte_to_char_index(line, *pos),
+                end: byte_to_char_index(line, *pos + error.len()),
                 issue_type: "拼写错误".to_string(),
                 message: format!("可能的拼写错误: '{}'", error),
                 suggestion: format!("建议修改为: '{}'", correction),
             });
 
             // 添加到已检测集合
-            detected_errors.insert(*error);
+            detected_errors.insert((*error).to_string());
+            detected_word_roots.insert(error_lower.clone());
+
+            // 添加到全局检测集合
+            global_detected_words.insert((*error).to_string());
+            global_detected_words.insert(error_lower.clone());
 
             if issues.len() >= MAX_ISSUES {
                 return;
             }
         }
 
-        // 尝试小写版本
-        let error_lower = error.to_lowercase();
-        if let Some(pos) = find_whole_word(line, &error_lower) {
-            issues.push(TextIssue {
-                line_number: line_idx + 1,
-                start: byte_to_char_index(line, pos),
-                end: byte_to_char_index(line, pos + error_lower.len()),
-                issue_type: "拼写错误".to_string(),
-                message: format!("可能的拼写错误: '{}'", &error_lower),
-                suggestion: format!("建议修改为: '{}'", correction),
-            });
+        // 尝试小写版本 - 只有在词根没有被处理过的情况下才检查
+        if !detected_word_roots.contains(&error_lower) {
+            if !detected_errors.contains(&error_lower) {
+                let positions = find_all_whole_words(line, &error_lower);
+                if let Some(pos) = positions.first() {
+                    issues.push(TextIssue {
+                        line_number: line_idx + 1,
+                        start: byte_to_char_index(line, *pos),
+                        end: byte_to_char_index(line, *pos + error_lower.len()),
+                        issue_type: "拼写错误".to_string(),
+                        message: format!("可能的拼写错误: '{}'", &error_lower),
+                        suggestion: format!("建议修改为: '{}'", correction),
+                    });
 
-            if issues.len() >= MAX_ISSUES {
-                return;
+                    // 添加到已检测集合
+                    detected_errors.insert(error_lower.clone());
+                    detected_word_roots.insert(error_lower.clone());
+
+                    // 添加到全局检测集合
+                    global_detected_words.insert(error_lower.clone());
+
+                    if issues.len() >= MAX_ISSUES {
+                        return;
+                    }
+                }
             }
         }
 
-        // 尝试首字母大写版本
-        let error_cap = capitalize_first(error);
-        if let Some(pos) = find_whole_word(line, &error_cap) {
-            issues.push(TextIssue {
-                line_number: line_idx + 1,
-                start: byte_to_char_index(line, pos),
-                end: byte_to_char_index(line, pos + error_cap.len()),
-                issue_type: "拼写错误".to_string(),
-                message: format!("可能的拼写错误: '{}'", &error_cap),
-                suggestion: format!("建议修改为: '{}'", correction),
-            });
+        // 尝试首字母大写版本 - 只有在词根没有被处理过的情况下才检查
+        if !detected_word_roots.contains(&error_lower) {
+            let error_cap = capitalize_first(error);
+            if !detected_errors.contains(error_cap.as_str()) {
+                let positions = find_all_whole_words(line, &error_cap);
+                if let Some(pos) = positions.first() {
+                    issues.push(TextIssue {
+                        line_number: line_idx + 1,
+                        start: byte_to_char_index(line, *pos),
+                        end: byte_to_char_index(line, *pos + error_cap.len()),
+                        issue_type: "拼写错误".to_string(),
+                        message: format!("可能的拼写错误: '{}'", &error_cap),
+                        suggestion: format!("建议修改为: '{}'", correction),
+                    });
 
-            if issues.len() >= MAX_ISSUES {
-                return;
+                    // 添加到已检测集合
+                    detected_errors.insert(error_cap.clone());
+                    detected_word_roots.insert(error_lower.clone());
+
+                    // 添加到全局检测集合
+                    global_detected_words.insert(error_cap.clone());
+                    global_detected_words.insert(error_lower.clone());
+
+                    if issues.len() >= MAX_ISSUES {
+                        return;
+                    }
+                }
             }
         }
     }

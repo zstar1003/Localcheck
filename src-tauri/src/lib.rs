@@ -138,6 +138,9 @@ fn process_text_chunk(
     issues: &mut Vec<TextIssue>,
     truncated: &mut bool,
 ) {
+    // 用于跟踪已经检测到的错误词根，避免重复提示相同词根的不同形式
+    // 这个集合在整个文本处理过程中共享，确保不会重复检测相同的错误
+    let mut global_detected_words = std::collections::HashSet::<String>::new();
     // Analyze each line
     for (rel_line_idx, line) in text.lines().enumerate() {
         let line_idx = start_line + rel_line_idx;
@@ -189,19 +192,25 @@ fn process_text_chunk(
         }
 
         // 使用改进的拼写检查器，解决单词切分不当和重复提示的问题
-        improved_checker::check_spelling(line, line_idx, issues);
+        improved_checker::check_spelling(line, line_idx, issues, &mut global_detected_words);
         if issues.len() >= MAX_ISSUES {
             break;
         }
 
         // 检查常见拼写错误
-        check_common_typos(line, line_idx, issues, &line_language);
+        check_common_typos(
+            line,
+            line_idx,
+            issues,
+            &line_language,
+            &mut global_detected_words,
+        );
         if issues.len() >= MAX_ISSUES {
             break;
         }
 
         // 使用标题检查器检查标题中的拼写错误
-        title_checker::check_title_spelling(line, line_idx, issues);
+        title_checker::check_title_spelling(line, line_idx, issues, &mut global_detected_words);
         if issues.len() >= MAX_ISSUES {
             break;
         }
@@ -535,7 +544,13 @@ fn check_redundant_expressions(
     }
 }
 
-fn check_common_typos(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>, language: &str) {
+fn check_common_typos(
+    line: &str,
+    line_idx: usize,
+    issues: &mut Vec<TextIssue>,
+    language: &str,
+    global_detected_words: &mut std::collections::HashSet<String>,
+) {
     // Skip if we've already found too many issues
     if issues.len() >= MAX_ISSUES {
         return;
@@ -601,20 +616,30 @@ fn check_common_typos(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>, 
 
             // 检查单词是否在拼写错误字典中
             if let Some(correction) = spelling_dict::check_word_spelling(clean_word) {
-                // 找到单词在原始行中的位置
-                if let Some(pos) = line.find(clean_word) {
-                    issues.push(TextIssue {
-                        line_number: line_idx + 1,
-                        start: byte_to_char_index(line, pos),
-                        end: byte_to_char_index(line, pos + clean_word.len()),
-                        issue_type: "拼写错误".to_string(),
-                        message: format!("可能的拼写错误: '{}'", clean_word),
-                        suggestion: format!("建议修改为: '{}'", correction),
-                    });
+                // 检查是否已经检测到这个单词或其变体
+                let clean_word_lower = clean_word.to_lowercase();
+                if !global_detected_words.contains(&clean_word.to_string())
+                    && !global_detected_words.contains(&clean_word_lower)
+                {
+                    // 找到单词在原始行中的位置
+                    if let Some(pos) = line.find(clean_word) {
+                        issues.push(TextIssue {
+                            line_number: line_idx + 1,
+                            start: byte_to_char_index(line, pos),
+                            end: byte_to_char_index(line, pos + clean_word.len()),
+                            issue_type: "拼写错误".to_string(),
+                            message: format!("可能的拼写错误: '{}'", clean_word),
+                            suggestion: format!("建议修改为: '{}'", correction),
+                        });
 
-                    // Stop if we've found too many issues
-                    if issues.len() >= MAX_ISSUES {
-                        return;
+                        // 添加到全局检测集合
+                        global_detected_words.insert(clean_word.to_string());
+                        global_detected_words.insert(clean_word_lower);
+
+                        // Stop if we've found too many issues
+                        if issues.len() >= MAX_ISSUES {
+                            return;
+                        }
                     }
                 }
             }

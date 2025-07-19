@@ -4,7 +4,12 @@ use crate::MAX_ISSUES;
 use std::collections::HashSet;
 
 // 检查标题和专有名词中的拼写错误
-pub fn check_title_spelling(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
+pub fn check_title_spelling(
+    line: &str,
+    line_idx: usize,
+    issues: &mut Vec<TextIssue>,
+    global_detected_words: &mut HashSet<String>,
+) {
     // Skip if we've already found too many issues
     if issues.len() >= MAX_ISSUES {
         return;
@@ -154,6 +159,14 @@ pub fn check_title_spelling(line: &str, line_idx: usize, issues: &mut Vec<TextIs
         // 检查单词是否在拼写错误字典中（不区分大小写）
         for (typo, correction) in title_typos.iter() {
             if word.to_lowercase() == typo.to_lowercase() {
+                // 检查是否已经在全局检测集合中
+                let word_lower = word.to_lowercase();
+                if global_detected_words.contains(&word.to_string())
+                    || global_detected_words.contains(&word_lower)
+                {
+                    continue;
+                }
+
                 // 找到单词在原始行中的位置
                 if let Some(pos) = find_whole_word(line, word) {
                     issues.push(TextIssue {
@@ -167,6 +180,10 @@ pub fn check_title_spelling(line: &str, line_idx: usize, issues: &mut Vec<TextIs
 
                     // 添加到已检测集合
                     detected_errors.insert(word);
+
+                    // 添加到全局检测集合
+                    global_detected_words.insert(word.to_string());
+                    global_detected_words.insert(word_lower);
 
                     // 检查是否达到最大问题数
                     if issues.len() >= MAX_ISSUES {
