@@ -27,6 +27,8 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [isLargeFile, setIsLargeFile] = useState<boolean>(false);
   const [ignoredIssues, setIgnoredIssues] = useState<Set<number>>(new Set());
+  const [selectedFilter, setSelectedFilter] = useState<string>("all");
+  const [showAboutDialog, setShowAboutDialog] = useState<boolean>(false);
   const editorRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -65,8 +67,9 @@ function App() {
       
       console.log("Analysis result:", result);
       setAnalysisResult(result);
-      // 清除之前忽略的问题
+      // 清除之前忽略的问题和筛选器
       setIgnoredIssues(new Set());
+      setSelectedFilter("all");
     } catch (error) {
       console.error("分析文本时出错:", error);
       setError(`分析失败: ${error}`);
@@ -263,6 +266,28 @@ function App() {
     setIgnoredIssues(new Set());
   };
 
+  // 获取所有唯一的错误类型
+  const getUniqueIssueTypes = () => {
+    if (!analysisResult) return [];
+    const types = new Set(analysisResult.issues.map(issue => issue.issue_type));
+    return Array.from(types).sort();
+  };
+
+  // 根据筛选条件过滤问题
+  const getFilteredIssues = () => {
+    if (!analysisResult) return [];
+
+    return analysisResult.issues
+      .map((issue, index) => ({ issue, index }))
+      .filter(({ index }) => !ignoredIssues.has(index))
+      .filter(({ issue }) => selectedFilter === "all" || issue.issue_type === selectedFilter);
+  };
+
+  // 处理筛选器变化
+  const handleFilterChange = (filterType: string) => {
+    setSelectedFilter(filterType);
+  };
+
   return (
     <div className="app-container">
       <div className="header">
@@ -278,9 +303,9 @@ function App() {
           </button>
         </div>
         <div>
-          <button 
-            className="button button-info" 
-            onClick={() => alert("论文本地校验工具 v1.0\n\n一个基于Tauri的论文本地校验工具，可以对导入的文本进行逐行校验，检测出文本中的错误并给出优化建议。\n\n支持中英文混合文本分析，自动识别语言。")}
+          <button
+            className="button button-info"
+            onClick={() => setShowAboutDialog(true)}
           >
             关于软件
           </button>
@@ -308,7 +333,21 @@ function App() {
 
         <div className="results-container">
           <div className="results-header">
-            分析结果
+            <span>分析结果</span>
+            {analysisResult && analysisResult.issues.length > 0 && (
+              <div className="filter-container">
+                <select
+                  className="filter-select"
+                  value={selectedFilter}
+                  onChange={(e) => handleFilterChange(e.target.value)}
+                >
+                  <option value="all">全部类型</option>
+                  {getUniqueIssueTypes().map(type => (
+                    <option key={type} value={type}>{type}</option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
           <div className="results-content">
             {error ? (
@@ -334,6 +373,12 @@ function App() {
                     <span>检测到的问题:</span>
                     <span>{analysisResult.issues.length}{analysisResult.truncated ? "+" : ""}</span>
                   </div>
+                  {selectedFilter !== "all" && (
+                    <div className="stats-item">
+                      <span>当前筛选:</span>
+                      <span>{getFilteredIssues().length} 个 {selectedFilter}</span>
+                    </div>
+                  )}
                 </div>
 
                 {analysisResult.truncated && (
@@ -350,63 +395,73 @@ function App() {
 
                 {analysisResult.issues.length > 0 ? (
                   <>
-                    {ignoredIssues.size > 0 && (
-                      <div className="ignored-info">
-                        <span>已忽略 {ignoredIssues.size} 个问题</span>
-                        <button
-                          className="button button-small button-secondary"
-                          onClick={handleClearIgnored}
-                        >
-                          显示全部
-                        </button>
-                      </div>
-                    )}
-                    {analysisResult.issues
-                      .map((issue, index) => ({ issue, index }))
-                      .filter(({ index }) => !ignoredIssues.has(index))
-                      .map(({ issue, index }) => (
-                        <div
-                          key={index}
-                          className="issue-item"
-                        >
-                          <div
-                            className="issue-content"
-                            onClick={() => handleIssueClick(issue)}
+                    <div className="filter-info">
+                      {ignoredIssues.size > 0 && (
+                        <div className="ignored-info">
+                          <span>已忽略 {ignoredIssues.size} 个问题</span>
+                          <button
+                            className="button button-small button-secondary"
+                            onClick={handleClearIgnored}
                           >
-                            <div className="issue-header">
-                              <span className="issue-type">{issue.issue_type}</span>
-                              <span className="issue-location">行 {issue.line_number}</span>
-                            </div>
-                            <div className="issue-message">{issue.message}</div>
-                            <div className="issue-suggestion">{issue.suggestion}</div>
-                          </div>
-                          <div className="issue-actions">
-                            <button
-                              className="button button-small button-accept"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleAcceptSuggestion(issue, index);
-                              }}
-                              title="接受建议并自动修改"
-                            >
-                              接受
-                            </button>
-                            <button
-                              className="button button-small button-ignore"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleIgnoreIssue(index);
-                              }}
-                              title="忽略此问题"
-                            >
-                              忽略
-                            </button>
-                          </div>
+                            显示全部
+                          </button>
                         </div>
-                      ))}
-                    {analysisResult.issues.filter((_, index) => !ignoredIssues.has(index)).length === 0 && (
+                      )}
+                      {selectedFilter !== "all" && (
+                        <div className="filter-active-info">
+                          <span>筛选: {selectedFilter}</span>
+                          <button
+                            className="button button-small button-secondary"
+                            onClick={() => handleFilterChange("all")}
+                          >
+                            清除筛选
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    {getFilteredIssues().map(({ issue, index }) => (
+                      <div
+                        key={index}
+                        className="issue-item"
+                      >
+                        <div
+                          className="issue-content"
+                          onClick={() => handleIssueClick(issue)}
+                        >
+                          <div className="issue-header">
+                            <span className="issue-type">{issue.issue_type}</span>
+                            <span className="issue-location">行 {issue.line_number}</span>
+                          </div>
+                          <div className="issue-message">{issue.message}</div>
+                          <div className="issue-suggestion">{issue.suggestion}</div>
+                        </div>
+                        <div className="issue-actions">
+                          <button
+                            className="button button-small button-accept"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleAcceptSuggestion(issue, index);
+                            }}
+                            title="接受建议并自动修改"
+                          >
+                            接受
+                          </button>
+                          <button
+                            className="button button-small button-ignore"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleIgnoreIssue(index);
+                            }}
+                            title="忽略此问题"
+                          >
+                            忽略
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    {getFilteredIssues().length === 0 && (
                       <div style={{ padding: '1rem', textAlign: 'center' }}>
-                        所有问题都已处理！
+                        {selectedFilter === "all" ? "所有问题都已处理！" : `没有 "${selectedFilter}" 类型的问题`}
                       </div>
                     )}
                   </>
@@ -430,6 +485,72 @@ function App() {
           </div>
         </div>
       </div>
+
+      {/* 关于对话框 */}
+      {showAboutDialog && (
+        <div className="modal-overlay" onClick={() => setShowAboutDialog(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>关于软件</h2>
+              <button
+                className="modal-close"
+                onClick={() => setShowAboutDialog(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="about-info">
+                <h3>论文本地校验工具 (LocalCheck)</h3>
+                <p className="version">版本: v0.1.0</p>
+
+                <div className="about-section">
+                  <h4>软件介绍</h4>
+                  <p>一个基于Tauri的论文本地校验工具，可以对导入的文本进行逐行校验，检测出文本中的错误并给出优化建议。支持中英文混合文本分析，自动识别语言。</p>
+                </div>
+
+                <div className="about-section">
+                  <h4>主要功能</h4>
+                  <ul>
+                    <li>拼写错误检测与修正建议</li>
+                    <li>语法错误识别</li>
+                    <li>重复词语检测</li>
+                    <li>学术写作风格检查</li>
+                    <li>标点符号规范检查</li>
+                    <li>中英文混合文本支持</li>
+                  </ul>
+                </div>
+
+                <div className="about-section">
+                  <h4>开发信息</h4>
+                  <div className="dev-info">
+                    <p><strong>作者:</strong> zstar</p>
+                    <p><strong>开源仓库:</strong>
+                      <a
+                        href="https://github.com/zstar1003/Localcheck"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="link"
+                      >
+                        https://github.com/zstar1003/Localcheck
+                      </a>
+                    </p>
+                    <p><strong>微信公众号:</strong> 我有一计</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button
+                className="button button-primary"
+                onClick={() => setShowAboutDialog(false)}
+              >
+                确定
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

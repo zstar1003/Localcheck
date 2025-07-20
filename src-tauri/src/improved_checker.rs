@@ -102,7 +102,7 @@ pub fn check_spelling(
                     line_number: line_idx + 1,
                     start: byte_to_char_index(line, *pos),
                     end: byte_to_char_index(line, *pos + word.len()),
-                    issue_type: "拼写错误".to_string(),
+                    issue_type: "可能的拼写错误".to_string(),
                     message: format!("可能的拼写错误: '{}'", word),
                     suggestion: format!("建议修改为: '{}'", correction),
                 });
@@ -235,7 +235,7 @@ fn check_title_errors(
                 line_number: line_idx + 1,
                 start: byte_to_char_index(line, *pos),
                 end: byte_to_char_index(line, *pos + error.len()),
-                issue_type: "拼写错误".to_string(),
+                issue_type: "可能的拼写错误".to_string(),
                 message: format!("可能的拼写错误: '{}'", error),
                 suggestion: format!("建议修改为: '{}'", correction),
             });
@@ -262,7 +262,7 @@ fn check_title_errors(
                         line_number: line_idx + 1,
                         start: byte_to_char_index(line, *pos),
                         end: byte_to_char_index(line, *pos + error_lower.len()),
-                        issue_type: "拼写错误".to_string(),
+                        issue_type: "可能的拼写错误".to_string(),
                         message: format!("可能的拼写错误: '{}'", &error_lower),
                         suggestion: format!("建议修改为: '{}'", correction),
                     });
@@ -291,7 +291,7 @@ fn check_title_errors(
                         line_number: line_idx + 1,
                         start: byte_to_char_index(line, *pos),
                         end: byte_to_char_index(line, *pos + error_cap.len()),
-                        issue_type: "拼写错误".to_string(),
+                        issue_type: "可能的拼写错误".to_string(),
                         message: format!("可能的拼写错误: '{}'", &error_cap),
                         suggestion: format!("建议修改为: '{}'", correction),
                     });
@@ -449,7 +449,7 @@ fn check_english_common_typos(
                     line_number: line_idx + 1,
                     start: byte_to_char_index(line, pos),
                     end: byte_to_char_index(line, pos + clean_word.len()),
-                    issue_type: "拼写错误".to_string(),
+                    issue_type: "可能的拼写错误".to_string(),
                     message: format!("可能的拼写错误: '{}'", clean_word),
                     suggestion: format!("建议修改为: '{}'", correction),
                 });

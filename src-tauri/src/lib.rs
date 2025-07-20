@@ -118,7 +118,7 @@ fn batch_spell_check(text: &str) -> AnalysisResult {
             line_number: line_idx + 1,
             start: pos,
             end: pos + wrong_word.len(),
-            issue_type: "拼写错误".to_string(),
+            issue_type: "可能的拼写错误".to_string(),
             message: format!("可能的拼写错误: '{}'", wrong_word),
             suggestion: format!("建议修改为: '{}'", correction),
         });
@@ -636,7 +636,7 @@ fn check_common_typos(
                             line_number: line_idx + 1,
                             start: byte_to_char_index(line, pos),
                             end: byte_to_char_index(line, pos + clean_word.len()),
-                            issue_type: "拼写错误".to_string(),
+                            issue_type: "可能的拼写错误".to_string(),
                             message: format!("可能的拼写错误: '{}'", clean_word),
                             suggestion: format!("建议修改为: '{}'", correction),
                         });
@@ -919,7 +919,7 @@ fn check_common_typos(
                     line_number: line_idx + 1,
                     start: byte_to_char_index(line, mat.start()),
                     end: byte_to_char_index(line, mat.end()),
-                    issue_type: "拼写错误".to_string(),
+                    issue_type: "可能的拼写错误".to_string(),
                     message: format!("可能的拼写错误: '{}'", typo),
                     suggestion: format!("建议修改为: '{}'", correction),
                 });

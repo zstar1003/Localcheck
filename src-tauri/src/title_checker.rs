@@ -175,7 +175,7 @@ pub fn check_title_spelling(
                         line_number: line_idx + 1,
                         start: byte_to_char_index(line, pos),
                         end: byte_to_char_index(line, pos + word.len()),
-                        issue_type: "拼写错误".to_string(),
+                        issue_type: "可能的拼写错误".to_string(),
                         message: format!("可能的拼写错误: '{}'", word),
                         suggestion: format!("建议修改为: '{}'", correction),
                     });
@@ -220,7 +220,7 @@ pub fn check_title_spelling(
                 line_number: line_idx + 1,
                 start: byte_to_char_index(line, pos),
                 end: byte_to_char_index(line, pos + error.len()),
-                issue_type: "拼写错误".to_string(),
+                issue_type: "可能的拼写错误".to_string(),
                 message: format!("可能的拼写错误: '{}'", error),
                 suggestion: format!("建议修改为: '{}'", correction),
             });
