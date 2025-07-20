@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api";
 import { open } from "@tauri-apps/api/dialog";
+import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 
 interface TextIssue {
@@ -18,6 +19,21 @@ interface AnalysisResult {
   truncated: boolean;
 }
 
+interface AnalysisProgress {
+  progress: number;
+  current_line: number;
+  total_lines: number;
+  issues_found: number;
+  message: string;
+}
+
+interface AsyncAnalysisResult {
+  completed: boolean;
+  progress?: AnalysisProgress;
+  result?: AnalysisResult;
+  error?: string;
+}
+
 function App() {
   const [text, setText] = useState<string>("");
   const [fileName, setFileName] = useState<string>("");
@@ -29,53 +45,101 @@ function App() {
   const [ignoredIssues, setIgnoredIssues] = useState<Set<number>>(new Set());
   const [selectedFilter, setSelectedFilter] = useState<string>("all");
   const [showAboutDialog, setShowAboutDialog] = useState<boolean>(false);
+  const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgress | null>(null);
+  const [currentAnalysisId, setCurrentAnalysisId] = useState<string | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // 添加调试信息
+  // 添加调试信息和事件监听器
   useEffect(() => {
     console.log("App component mounted");
     console.log("Tauri API available:", !!invoke);
-    
+
     // 检查DOM元素是否正确渲染
     setTimeout(() => {
       console.log("Editor container:", document.querySelector('.editor-container'));
       console.log("Results container:", document.querySelector('.results-container'));
       console.log("Main content:", document.querySelector('.main-content'));
     }, 1000);
+
+    // 设置异步分析事件监听器
+    const setupAsyncListeners = async () => {
+      // 监听分析进度
+      await listen<AsyncAnalysisResult>('analysis_progress', (event) => {
+        if (event.payload.progress) {
+          setAnalysisProgress(event.payload.progress);
+        }
+      });
+
+      // 监听分析完成
+      await listen<AsyncAnalysisResult>('analysis_complete', (event) => {
+        setIsAnalyzing(false);
+        setAnalysisProgress(null);
+        setCurrentAnalysisId(null);
+
+        if (event.payload.result) {
+          setAnalysisResult(event.payload.result);
+          setIgnoredIssues(new Set());
+          setSelectedFilter("all");
+        } else if (event.payload.error) {
+          setError(`分析失败: ${event.payload.error}`);
+        }
+      });
+    };
+
+    setupAsyncListeners().catch(console.error);
   }, []);
 
-  // 分析文本
+  // 分析文本（支持异步和同步模式）
   const analyzeText = async () => {
     if (!text.trim() && !filePath) return;
-    
+
     setIsAnalyzing(true);
     setError(null);
-    
+    setAnalysisProgress(null);
+
     try {
-      let result: AnalysisResult;
-      
-      if (isLargeFile && filePath) {
-        // 使用文件路径分析大文件
+      // 检查文本长度，决定使用同步还是异步分析
+      const shouldUseAsync = text.length > 10000 || (isLargeFile && filePath);
+
+      if (shouldUseAsync && !isLargeFile) {
+        // 使用异步分析处理大文本
+        console.log("Using async analysis for large text:", text.substring(0, 50) + "...");
+        const analysisId = await invoke<string>("analyze_text_async", { text });
+        setCurrentAnalysisId(analysisId);
+        // 异步分析的结果会通过事件监听器处理
+      } else if (isLargeFile && filePath) {
+        // 使用文件路径分析大文件（保持原有逻辑）
         console.log("Analyzing large file:", filePath);
-        result = await invoke<AnalysisResult>("analyze_large_file", { path: filePath });
+        const result = await invoke<AnalysisResult>("analyze_large_file", { path: filePath });
+        setAnalysisResult(result);
+        setIgnoredIssues(new Set());
+        setSelectedFilter("all");
+        setIsAnalyzing(false);
       } else {
-        // 直接分析文本内容
-        console.log("Analyzing text:", text.substring(0, 50) + "...");
-        result = await invoke<AnalysisResult>("analyze_text", { text });
+        // 使用同步分析处理小文本
+        console.log("Using sync analysis for small text:", text.substring(0, 50) + "...");
+        const result = await invoke<AnalysisResult>("analyze_text", { text });
+        setAnalysisResult(result);
+        setIgnoredIssues(new Set());
+        setSelectedFilter("all");
+        setIsAnalyzing(false);
       }
-      
-      console.log("Analysis result:", result);
-      setAnalysisResult(result);
-      // 清除之前忽略的问题和筛选器
-      setIgnoredIssues(new Set());
-      setSelectedFilter("all");
     } catch (error) {
       console.error("分析文本时出错:", error);
       setError(`分析失败: ${error}`);
-    } finally {
       setIsAnalyzing(false);
+      setAnalysisProgress(null);
+      setCurrentAnalysisId(null);
     }
+  };
+
+  // 取消分析
+  const cancelAnalysis = () => {
+    setIsAnalyzing(false);
+    setAnalysisProgress(null);
+    setCurrentAnalysisId(null);
+    setError("分析已取消");
   };
 
 
@@ -293,14 +357,23 @@ function App() {
       <div className="header">
         <div>
           <button className="button" onClick={openFile}>打开文件</button>
-          <button 
-            className="button" 
-            onClick={analyzeText} 
+          <button
+            className="button"
+            onClick={analyzeText}
             disabled={(!text.trim() && !filePath) || isAnalyzing}
             style={{ marginLeft: '10px' }}
           >
-            {isAnalyzing ? "分析中..." : "分析文本"}
+            {isAnalyzing ? (analysisProgress ? "异步分析中..." : "分析中...") : "分析文本"}
           </button>
+          {isAnalyzing && currentAnalysisId && (
+            <button
+              className="button button-secondary"
+              onClick={cancelAnalysis}
+              style={{ marginLeft: '10px' }}
+            >
+              取消分析
+            </button>
+          )}
         </div>
         <div>
           <button
@@ -474,9 +547,28 @@ function App() {
             ) : (
               <div style={{ padding: '1rem', textAlign: 'center' }}>
                 {text.trim() || filePath ? (
-                  isAnalyzing ? 
-                    "正在分析文本..." : 
+                  isAnalyzing ? (
+                    analysisProgress ? (
+                      <div className="analysis-progress">
+                        <div className="progress-message">{analysisProgress.message}</div>
+                        <div className="progress-bar-container">
+                          <div
+                            className="progress-bar"
+                            style={{ width: `${analysisProgress.progress}%` }}
+                          ></div>
+                        </div>
+                        <div className="progress-stats">
+                          进度: {Math.round(analysisProgress.progress)}% |
+                          行数: {analysisProgress.current_line}/{analysisProgress.total_lines} |
+                          发现问题: {analysisProgress.issues_found}
+                        </div>
+                      </div>
+                    ) : (
+                      "正在分析文本..."
+                    )
+                  ) : (
                     "点击'分析文本'按钮开始检查"
+                  )
                 ) : (
                   "请输入或导入文本进行分析"
                 )}

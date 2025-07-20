@@ -5,6 +5,8 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
+use std::time::Duration;
+
 // 导入拼写检查模块
 mod dictionary;
 mod fix_functions;
@@ -34,11 +36,28 @@ fn byte_to_char_index(s: &str, byte_idx: usize) -> usize {
     s[..byte_idx.min(s.len())].chars().count()
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AnalysisResult {
     issues: Vec<TextIssue>,
     stats: HashMap<String, usize>,
     truncated: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AnalysisProgress {
+    progress: f32,
+    current_line: usize,
+    total_lines: usize,
+    issues_found: usize,
+    message: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AsyncAnalysisResult {
+    completed: bool,
+    progress: Option<AnalysisProgress>,
+    result: Option<AnalysisResult>,
+    error: Option<String>,
 }
 
 #[tauri::command]
@@ -1275,10 +1294,121 @@ fn analyze_large_file(path: &str) -> Result<AnalysisResult, String> {
     })
 }
 
+// 异步分析文本，支持进度报告
+#[tauri::command]
+async fn analyze_text_async(text: String, window: tauri::Window) -> Result<String, String> {
+    let analysis_id = format!(
+        "analysis_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    );
+
+    // 在新线程中执行分析
+    let window_clone = window.clone();
+    let analysis_id_clone = analysis_id.clone();
+
+    tokio::spawn(async move {
+        let result = perform_async_analysis(text, window_clone.clone(), analysis_id_clone).await;
+
+        // 发送最终结果
+        let final_result = AsyncAnalysisResult {
+            completed: true,
+            progress: None,
+            result: result.as_ref().ok().cloned(),
+            error: result.as_ref().err().cloned(),
+        };
+
+        let _ = window_clone.emit("analysis_complete", &final_result);
+    });
+
+    Ok(analysis_id)
+}
+
+// 执行异步分析的核心函数
+async fn perform_async_analysis(
+    text: String,
+    window: tauri::Window,
+    _analysis_id: String,
+) -> Result<AnalysisResult, String> {
+    let mut issues = Vec::new();
+    let mut stats = HashMap::new();
+    let mut truncated = false;
+
+    // Limit text size to prevent crashes
+    let text = if text.len() > MAX_TEXT_LENGTH {
+        truncated = true;
+        &text[0..MAX_TEXT_LENGTH]
+    } else {
+        &text
+    };
+
+    // Calculate basic statistics
+    let total_chars = text.chars().count();
+    let total_words = text.split_whitespace().count();
+    let total_lines = text.lines().count();
+
+    stats.insert("total_chars".to_string(), total_chars);
+    stats.insert("total_words".to_string(), total_words);
+    stats.insert("total_lines".to_string(), total_lines);
+
+    // 分块处理文本，每处理一定行数就报告进度
+    let lines: Vec<&str> = text.lines().collect();
+    let chunk_size = 50; // 每50行报告一次进度
+
+    for (chunk_idx, chunk) in lines.chunks(chunk_size).enumerate() {
+        let current_line = chunk_idx * chunk_size;
+        let progress = (current_line as f32) / (total_lines as f32);
+
+        // 发送进度更新
+        let progress_update = AsyncAnalysisResult {
+            completed: false,
+            progress: Some(AnalysisProgress {
+                progress: progress * 100.0,
+                current_line,
+                total_lines,
+                issues_found: issues.len(),
+                message: format!("正在分析第 {} 行...", current_line + 1),
+            }),
+            result: None,
+            error: None,
+        };
+
+        let _ = window.emit("analysis_progress", &progress_update);
+
+        // 处理当前块
+        let chunk_text = chunk.join("\n");
+        process_text_chunk(&chunk_text, current_line, &mut issues, &mut truncated);
+
+        // 检查是否超过最大问题数
+        if issues.len() >= MAX_ISSUES {
+            truncated = true;
+            break;
+        }
+
+        // 添加小延迟以避免阻塞UI
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    // Limit the number of issues returned
+    if issues.len() > MAX_ISSUES {
+        issues.truncate(MAX_ISSUES);
+        truncated = true;
+    }
+
+    Ok(AnalysisResult {
+        issues,
+        stats,
+        truncated,
+    })
+}
+
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             analyze_text,
+            analyze_text_async,
             read_file_content,
             analyze_large_file,
             batch_spell_check

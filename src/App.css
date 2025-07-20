@@ -542,6 +542,40 @@ html, body {
   text-decoration: underline;
 }
 
+/* 分析进度样式 */
+.analysis-progress {
+  padding: 1rem;
+  text-align: center;
+}
+
+.progress-message {
+  margin-bottom: 1rem;
+  font-weight: 500;
+  color: #333;
+}
+
+.progress-bar-container {
+  width: 100%;
+  height: 8px;
+  background-color: #e9ecef;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 0.5rem;
+}
+
+.progress-bar {
+  height: 100%;
+  background-color: #2c7be5;
+  transition: width 0.3s ease;
+  border-radius: 4px;
+}
+
+.progress-stats {
+  font-size: 0.9rem;
+  color: #666;
+  margin-top: 0.5rem;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     color: #f6f6f6;
@@ -669,6 +703,22 @@ html, body {
 
   .link:hover {
     color: #74c0fc;
+  }
+
+  .progress-message {
+    color: #f6f6f6;
+  }
+
+  .progress-bar-container {
+    background-color: #444;
+  }
+
+  .progress-bar {
+    background-color: #4dabf7;
+  }
+
+  .progress-stats {
+    color: #aaa;
   }
 
   .issue-location {
