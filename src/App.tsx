@@ -26,6 +26,7 @@ function App() {
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [isLargeFile, setIsLargeFile] = useState<boolean>(false);
+  const [ignoredIssues, setIgnoredIssues] = useState<Set<number>>(new Set());
   const editorRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -64,6 +65,8 @@ function App() {
       
       console.log("Analysis result:", result);
       setAnalysisResult(result);
+      // 清除之前忽略的问题
+      setIgnoredIssues(new Set());
     } catch (error) {
       console.error("分析文本时出错:", error);
       setError(`分析失败: ${error}`);
@@ -71,28 +74,7 @@ function App() {
       setIsAnalyzing(false);
     }
   };
-  
-  // 批量拼写检查
-  const batchSpellCheck = async () => {
-    if (!text.trim() && !filePath) return;
-    
-    setIsAnalyzing(true);
-    setError(null);
-    
-    try {
-      // 直接分析文本内容
-      console.log("Batch spell checking text:", text.substring(0, 50) + "...");
-      const result = await invoke<AnalysisResult>("batch_spell_check", { text });
-      
-      console.log("Spell check result:", result);
-      setAnalysisResult(result);
-    } catch (error) {
-      console.error("拼写检查时出错:", error);
-      setError(`拼写检查失败: ${error}`);
-    } finally {
-      setIsAnalyzing(false);
-    }
-  };
+
 
   // 打开文件
   const openFile = async () => {
@@ -155,30 +137,30 @@ function App() {
       try {
         // 计算行的位置
         const lines = text.split("\n");
-        
+
         // 确保行号在有效范围内
         const lineIndex = Math.min(issue.line_number - 1, lines.length - 1);
         const line = lines[lineIndex];
-        
+
         // 计算行的起始位置（字符偏移量）
         let position = 0;
         for (let i = 0; i < lineIndex; i++) {
           position += lines[i].length + 1; // +1 for newline character
         }
-        
+
         // 确保起始和结束位置在有效范围内
         const start = position + Math.min(issue.start, line.length);
         const end = position + Math.min(issue.end, line.length);
-        
+
         console.log(`Highlighting issue: Line ${issue.line_number}, Start: ${issue.start}, End: ${issue.end}`);
         console.log(`Text position: Start: ${start}, End: ${end}`);
         console.log(`Line content: "${line}"`);
         console.log(`Highlighted text: "${text.substring(start, end)}"`);
-        
+
         // 设置选择范围
         textareaRef.current.focus();
         textareaRef.current.setSelectionRange(start, end);
-        
+
         // 滚动到可见区域
         const lineHeight = 24; // 估计的行高
         const scrollTop = lineIndex * lineHeight - 100;
@@ -189,6 +171,96 @@ function App() {
         console.error("高亮文本时出错:", error);
       }
     }
+  };
+
+  // 接受建议，自动修改文本
+  const handleAcceptSuggestion = (issue: TextIssue, index: number) => {
+    if (textareaRef.current) {
+      try {
+        // 计算行的位置
+        const lines = text.split("\n");
+        const lineIndex = Math.min(issue.line_number - 1, lines.length - 1);
+        const line = lines[lineIndex];
+
+        // 计算行的起始位置（字符偏移量）
+        let position = 0;
+        for (let i = 0; i < lineIndex; i++) {
+          position += lines[i].length + 1; // +1 for newline character
+        }
+
+        // 确保起始和结束位置在有效范围内
+        const start = position + Math.min(issue.start, line.length);
+        const end = position + Math.min(issue.end, line.length);
+        const originalText = text.substring(start, end);
+
+        // 提取建议的修改文本
+        let replacement = "";
+
+        // 处理不同类型的建议
+        if (issue.suggestion.includes("建议修改为:")) {
+          // 拼写错误修正
+          const match = issue.suggestion.match(/建议修改为:\s*['"]([^'"]+)['"]/);
+          if (match) {
+            replacement = match[1];
+          }
+        } else if (issue.suggestion.includes("应使用:")) {
+          // 成语用法修正
+          const match = issue.suggestion.match(/应使用:\s*['"]([^'"]+)['"]/);
+          if (match) {
+            replacement = match[1];
+          }
+        } else if (issue.suggestion.includes("删除重复的")) {
+          // 重复词删除
+          if (issue.issue_type === "重复词") {
+            // 对于重复词，删除后面的重复部分
+            const words = originalText.split(/\s+/);
+            if (words.length >= 2 && words[0] === words[1]) {
+              replacement = words[0];
+            }
+          } else if (issue.issue_type === "重复字符") {
+            // 对于重复字符，删除一个
+            replacement = originalText.charAt(0);
+          }
+        } else if (issue.suggestion.includes("建议使用")) {
+          // 非正式代词替换
+          if (issue.suggestion.includes("建议使用 '我们'")) {
+            replacement = "我们";
+          }
+        } else if (issue.suggestion.includes("删除多余的标点")) {
+          // 标点符号问题
+          replacement = originalText.replace(/[，。！？；：""''（）【】《》〈〉「」『』〔〕［］｛｝〖〗]+$/, "");
+        }
+
+        if (replacement !== "" && replacement !== originalText) {
+          // 执行文本替换
+          const newText = text.substring(0, start) + replacement + text.substring(end);
+          setText(newText);
+
+          // 将问题标记为已忽略（因为已经修复）
+          setIgnoredIssues(prev => new Set([...prev, index]));
+
+          console.log(`Applied suggestion: "${originalText}" -> "${replacement}"`);
+        } else {
+          // 如果无法自动修复，只是忽略问题
+          setIgnoredIssues(prev => new Set([...prev, index]));
+          console.log(`Cannot auto-fix, ignoring issue: ${issue.message}`);
+        }
+      } catch (error) {
+        console.error("应用建议时出错:", error);
+        // 出错时也忽略问题
+        setIgnoredIssues(prev => new Set([...prev, index]));
+      }
+    }
+  };
+
+  // 忽略问题
+  const handleIgnoreIssue = (index: number) => {
+    setIgnoredIssues(prev => new Set([...prev, index]));
+  };
+
+  // 清除所有忽略的问题
+  const handleClearIgnored = () => {
+    setIgnoredIssues(new Set());
   };
 
   return (
@@ -277,20 +349,67 @@ function App() {
                 )}
 
                 {analysisResult.issues.length > 0 ? (
-                  analysisResult.issues.map((issue, index) => (
-                    <div 
-                      key={index} 
-                      className="issue-item"
-                      onClick={() => handleIssueClick(issue)}
-                    >
-                      <div className="issue-header">
-                        <span className="issue-type">{issue.issue_type}</span>
-                        <span className="issue-location">行 {issue.line_number}</span>
+                  <>
+                    {ignoredIssues.size > 0 && (
+                      <div className="ignored-info">
+                        <span>已忽略 {ignoredIssues.size} 个问题</span>
+                        <button
+                          className="button button-small button-secondary"
+                          onClick={handleClearIgnored}
+                        >
+                          显示全部
+                        </button>
                       </div>
-                      <div className="issue-message">{issue.message}</div>
-                      <div className="issue-suggestion">{issue.suggestion}</div>
-                    </div>
-                  ))
+                    )}
+                    {analysisResult.issues
+                      .map((issue, index) => ({ issue, index }))
+                      .filter(({ index }) => !ignoredIssues.has(index))
+                      .map(({ issue, index }) => (
+                        <div
+                          key={index}
+                          className="issue-item"
+                        >
+                          <div
+                            className="issue-content"
+                            onClick={() => handleIssueClick(issue)}
+                          >
+                            <div className="issue-header">
+                              <span className="issue-type">{issue.issue_type}</span>
+                              <span className="issue-location">行 {issue.line_number}</span>
+                            </div>
+                            <div className="issue-message">{issue.message}</div>
+                            <div className="issue-suggestion">{issue.suggestion}</div>
+                          </div>
+                          <div className="issue-actions">
+                            <button
+                              className="button button-small button-accept"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleAcceptSuggestion(issue, index);
+                              }}
+                              title="接受建议并自动修改"
+                            >
+                              接受
+                            </button>
+                            <button
+                              className="button button-small button-ignore"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleIgnoreIssue(index);
+                              }}
+                              title="忽略此问题"
+                            >
+                              忽略
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    {analysisResult.issues.filter((_, index) => !ignoredIssues.has(index)).length === 0 && (
+                      <div style={{ padding: '1rem', textAlign: 'center' }}>
+                        所有问题都已处理！
+                      </div>
+                    )}
+                  </>
                 ) : (
                   <div style={{ padding: '1rem', textAlign: 'center' }}>
                     没有检测到问题，文本质量良好！

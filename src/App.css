@@ -175,19 +175,32 @@ html, body {
 
 .issue-item {
   margin-bottom: 0.5rem;
-  padding: 0.7rem;
   border-radius: 6px;
   border-left: 3px solid #ff6b6b;
   background-color: #fff;
-  cursor: pointer;
   transition: all 0.2s ease;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  display: flex;
+  flex-direction: column;
 }
 
-.issue-item:hover {
+.issue-content {
+  padding: 0.7rem;
+  cursor: pointer;
+  flex: 1;
+}
+
+.issue-content:hover {
   background-color: #f8f9fa;
-  transform: translateY(-1px);
-  box-shadow: 0 3px 5px rgba(0, 0, 0, 0.08);
+}
+
+.issue-actions {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.5rem 0.7rem;
+  border-top: 1px solid #eee;
+  background-color: #f9f9f9;
+  border-radius: 0 0 6px 6px;
 }
 
 .issue-header {
@@ -288,6 +301,42 @@ html, body {
   background-color: #138496;
 }
 
+.button-small {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.8rem;
+  border-radius: 3px;
+}
+
+.button-accept {
+  background-color: #28a745;
+  color: white;
+}
+
+.button-accept:hover {
+  background-color: #218838;
+}
+
+.button-ignore {
+  background-color: #6c757d;
+  color: white;
+}
+
+.button-ignore:hover {
+  background-color: #5a6268;
+}
+
+.ignored-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem;
+  margin-bottom: 0.5rem;
+  background-color: #e9ecef;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  color: #6c757d;
+}
+
 .language-selector {
   margin-left: 1rem;
   padding: 0.25rem 0.5rem;
@@ -362,9 +411,18 @@ html, body {
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
   }
 
-  .issue-item:hover {
+  .issue-content:hover {
     background-color: #333;
-    box-shadow: 0 3px 5px rgba(0, 0, 0, 0.3);
+  }
+
+  .issue-actions {
+    background-color: #333;
+    border-color: #444;
+  }
+
+  .ignored-info {
+    background-color: #333;
+    color: #aaa;
   }
 
   .issue-location {
