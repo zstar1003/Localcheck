@@ -198,9 +198,9 @@ function App() {
     setIsLargeFile(false); // 用户编辑了文本，不再是大文件模式
   };
 
-  // 点击问题项，高亮对应文本
+  // 点击问题项，高亮对应文本并优化滚动位置
   const handleIssueClick = (issue: TextIssue) => {
-    if (textareaRef.current) {
+    if (textareaRef.current && editorRef.current) {
       try {
         // 计算行的位置
         const lines = text.split("\n");
@@ -228,12 +228,70 @@ function App() {
         textareaRef.current.focus();
         textareaRef.current.setSelectionRange(start, end);
 
-        // 滚动到可见区域
-        const lineHeight = 24; // 估计的行高
-        const scrollTop = lineIndex * lineHeight - 100;
-        if (editorRef.current) {
-          editorRef.current.scrollTop = scrollTop > 0 ? scrollTop : 0;
+        // 优化滚动位置计算
+        const textarea = textareaRef.current;
+        const editorContainer = editorRef.current;
+
+        // 获取精确的行高
+        const lineHeight = getAccurateLineHeight(textarea);
+
+        // 获取textarea的padding
+        const computedStyle = window.getComputedStyle(textarea);
+        const paddingTop = parseFloat(computedStyle.paddingTop) || 0;
+
+        // 获取容器高度
+        const containerHeight = editorContainer.clientHeight;
+
+        // 使用更精确的位置计算方法
+        let targetLinePixelPosition: number;
+
+        // 对于较大的文本，使用精确计算；对于小文本，使用简单估算
+        if (text.length > 5000 && lineIndex > 50) {
+          targetLinePixelPosition = calculateTextPosition(textarea, lineIndex) + paddingTop;
+        } else {
+          targetLinePixelPosition = lineIndex * lineHeight + paddingTop;
         }
+
+        // 计算理想的滚动位置：将目标行显示在容器的上1/4位置（偏上显示）
+        const offsetFromTop = containerHeight * 0.2; // 显示在顶部20%的位置
+        const idealScrollTop = targetLinePixelPosition - offsetFromTop;
+
+        // 确保滚动位置在有效范围内
+        const maxScrollTop = textarea.scrollHeight - containerHeight;
+        const finalScrollTop = Math.max(0, Math.min(idealScrollTop, maxScrollTop));
+
+        // 使用更精确的滚动方法
+        // 首先尝试使用现代的scrollTo API
+        if (textarea.scrollTo) {
+          textarea.scrollTo({
+            top: finalScrollTop,
+            behavior: 'smooth'
+          });
+        } else {
+          // 降级到直接设置scrollTop
+          textarea.scrollTop = finalScrollTop;
+        }
+
+        // 添加一个小延迟确保滚动完成后再同步容器和添加视觉反馈
+        setTimeout(() => {
+          // 确保编辑器容器也滚动到相应位置
+          if (editorContainer.scrollTop !== textarea.scrollTop) {
+            editorContainer.scrollTop = textarea.scrollTop;
+          }
+
+          // 添加临时的高亮效果来指示当前选中的问题位置
+          textarea.style.transition = 'box-shadow 0.3s ease';
+          textarea.style.boxShadow = '0 0 0 2px rgba(44, 123, 229, 0.3)';
+
+          // 2秒后移除高亮效果
+          setTimeout(() => {
+            textarea.style.boxShadow = '';
+            textarea.style.transition = '';
+          }, 2000);
+        }, 100);
+
+        console.log(`Scroll calculation: lineIndex=${lineIndex}, lineHeight=${lineHeight}, targetPosition=${targetLinePixelPosition}, finalScrollTop=${finalScrollTop}`);
+
       } catch (error) {
         console.error("高亮文本时出错:", error);
       }
@@ -350,6 +408,72 @@ function App() {
   // 处理筛选器变化
   const handleFilterChange = (filterType: string) => {
     setSelectedFilter(filterType);
+  };
+
+  // 辅助函数：获取更精确的行高
+  const getAccurateLineHeight = (textarea: HTMLTextAreaElement): number => {
+    try {
+      const computedStyle = window.getComputedStyle(textarea);
+      const lineHeight = computedStyle.lineHeight;
+
+      if (lineHeight === 'normal') {
+        // 如果是normal，计算基于字体大小的行高
+        const fontSize = parseFloat(computedStyle.fontSize) || 16;
+        return fontSize * 1.5; // 通常normal行高是字体大小的1.2-1.5倍
+      } else if (lineHeight.endsWith('px')) {
+        return parseFloat(lineHeight);
+      } else if (lineHeight.endsWith('em') || lineHeight.endsWith('rem')) {
+        const fontSize = parseFloat(computedStyle.fontSize) || 16;
+        return parseFloat(lineHeight) * fontSize;
+      } else {
+        // 纯数字，表示倍数
+        const fontSize = parseFloat(computedStyle.fontSize) || 16;
+        return parseFloat(lineHeight) * fontSize;
+      }
+    } catch (error) {
+      console.warn("无法计算精确行高，使用默认值:", error);
+      return 24; // 默认行高
+    }
+  };
+
+  // 辅助函数：计算文本在textarea中的精确位置
+  const calculateTextPosition = (textarea: HTMLTextAreaElement, lineIndex: number): number => {
+    try {
+      // 创建一个临时的测量元素
+      const measurer = document.createElement('div');
+      const computedStyle = window.getComputedStyle(textarea);
+
+      // 复制textarea的样式到测量元素
+      measurer.style.font = computedStyle.font;
+      measurer.style.lineHeight = computedStyle.lineHeight;
+      measurer.style.letterSpacing = computedStyle.letterSpacing;
+      measurer.style.wordSpacing = computedStyle.wordSpacing;
+      measurer.style.whiteSpace = 'pre-wrap';
+      measurer.style.overflowWrap = 'break-word';
+      measurer.style.width = textarea.clientWidth + 'px';
+      measurer.style.position = 'absolute';
+      measurer.style.visibility = 'hidden';
+      measurer.style.top = '-9999px';
+
+      document.body.appendChild(measurer);
+
+      // 获取到目标行的文本
+      const lines = text.split('\n');
+      const textUpToLine = lines.slice(0, lineIndex).join('\n');
+      measurer.textContent = textUpToLine;
+
+      // 获取高度
+      const height = measurer.offsetHeight;
+
+      // 清理
+      document.body.removeChild(measurer);
+
+      return height;
+    } catch (error) {
+      console.warn("无法精确计算文本位置，使用估算:", error);
+      const lineHeight = getAccurateLineHeight(textarea);
+      return lineIndex * lineHeight;
+    }
   };
 
   return (

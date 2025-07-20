@@ -102,6 +102,22 @@ html, body {
   outline: none;
 }
 
+/* 滚动时的平滑过渡效果 */
+.editor-textarea {
+  scroll-behavior: smooth;
+}
+
+/* 选中文本的高亮样式 */
+.editor-textarea::selection {
+  background-color: rgba(44, 123, 229, 0.3);
+  color: inherit;
+}
+
+.editor-textarea::-moz-selection {
+  background-color: rgba(44, 123, 229, 0.3);
+  color: inherit;
+}
+
 .results-container {
   width: 350px;
   border: 1px solid #ddd;
@@ -758,6 +774,16 @@ html, body {
 
   .file-info {
     color: #aaa;
+  }
+
+  .editor-textarea::selection {
+    background-color: rgba(74, 171, 247, 0.4);
+    color: inherit;
+  }
+
+  .editor-textarea::-moz-selection {
+    background-color: rgba(74, 171, 247, 0.4);
+    color: inherit;
   }
 
   /* 暗色模式滚动条样式 */
