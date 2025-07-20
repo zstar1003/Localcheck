@@ -7,7 +7,7 @@
     "distDir": "../dist"
   },
   "package": {
-    "productName": "论文本地校验工具",
+    "productName": "本地校验器",
     "version": "0.1.0"
   },
   "tauri": {
@@ -47,7 +47,7 @@
       {
         "fullscreen": false,
         "resizable": true,
-        "title": "论文本地校验工具",
+        "title": "本地校验器",
         "width": 1200,
         "height": 800,
         "minWidth": 800,

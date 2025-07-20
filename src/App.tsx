@@ -717,12 +717,12 @@ function App() {
             </div>
             <div className="modal-body">
               <div className="about-info">
-                <h3>论文本地校验工具 (LocalCheck)</h3>
+                <h3>本地校验器 (LocalCheck)</h3>
                 <p className="version">版本: v0.1.0</p>
 
                 <div className="about-section">
                   <h4>软件介绍</h4>
-                  <p>一个基于Tauri的论文本地校验工具，可以对导入的文本进行逐行校验，检测出文本中的错误并给出优化建议。支持中英文混合文本分析，自动识别语言。</p>
+                  <p>一个基于Tauri的本地校验器，可以对导入的文本进行逐行校验，检测出文本中的错误并给出优化建议。支持中英文混合文本分析，自动识别语言。</p>
                 </div>
 
                 <div className="about-section">
