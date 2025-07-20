@@ -152,9 +152,11 @@ pub fn check_academic_style(
             }
         }
 
-        // Check for first person pronouns in Chinese academic writing
-        let first_person_pronouns = ["我", "我们", "咱们", "俺", "俺们"];
-        for pronoun in first_person_pronouns {
+        // Check for informal pronouns in Chinese academic writing
+        // Note: "我" and "我们" are acceptable in Chinese academic writing
+        // Only flag informal pronouns like "咱们", "俺", "俺们"
+        let informal_pronouns = ["咱们", "俺", "俺们"];
+        for pronoun in informal_pronouns {
             if line.contains(pronoun) {
                 if let Some(pos) = line.find(pronoun) {
                     issues.push(TextIssue {
@@ -162,8 +164,8 @@ pub fn check_academic_style(
                         start: byte_to_char_index(line, pos),
                         end: byte_to_char_index(line, pos + pronoun.len()),
                         issue_type: "学术写作风格".to_string(),
-                        message: "正式学术写作中应避免使用第一人称代词".to_string(),
-                        suggestion: "考虑使用被动语态或更客观的表达方式".to_string(),
+                        message: format!("正式学术写作中应避免使用非正式代词 '{}'", pronoun),
+                        suggestion: "建议使用 '我们' 或更正式的表达方式".to_string(),
                     });
 
                     // Stop if we've found too many issues
@@ -205,14 +207,16 @@ pub fn check_sentence_length(
     for (i, c) in line.char_indices() {
         if sentence_endings.contains(&c) {
             if in_sentence {
-                let sentence = &line[start_pos..i + 1];
+                // 计算字符的结束位置（字符安全）
+                let char_end_pos = i + c.len_utf8();
+                let sentence = &line[start_pos..char_end_pos];
                 let sentence_length = sentence.chars().count();
 
                 if sentence_length > max_length {
                     issues.push(TextIssue {
                         line_number: line_idx + 1,
                         start: byte_to_char_index(line, start_pos),
-                        end: byte_to_char_index(line, i + 1),
+                        end: byte_to_char_index(line, char_end_pos),
                         issue_type: "句子长度".to_string(),
                         message: format!("句子过长 ({} 字符)", sentence_length),
                         suggestion: "考虑将长句拆分为多个短句，以提高可读性".to_string(),

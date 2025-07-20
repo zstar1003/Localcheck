@@ -433,18 +433,36 @@ pub fn check_text_spelling(text: &str) -> Vec<(String, String, usize, usize)> {
 
         let mut pos = 0;
         for word in words {
-            // 跳过空白字符
-            while pos < line.len() && line[pos..].starts_with(|c: char| c.is_whitespace()) {
-                pos += 1;
+            // 跳过空白字符（字符安全）
+            while pos < line.len() {
+                // 确保pos在字符边界上
+                if let Some(remaining) = line.get(pos..) {
+                    if remaining.starts_with(|c: char| c.is_whitespace()) {
+                        // 安全地移动到下一个字符
+                        if let Some(ch) = remaining.chars().next() {
+                            pos += ch.len_utf8();
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
             }
 
-            // 找到单词的位置
-            let word_pos = match line[pos..].find(word) {
-                Some(p) => pos + p,
-                None => {
-                    pos += word.len();
-                    continue;
+            // 找到单词的位置（字符安全）
+            let word_pos = if pos < line.len() {
+                match line.get(pos..).and_then(|remaining| remaining.find(word)) {
+                    Some(p) => pos + p,
+                    None => {
+                        pos += word.len();
+                        continue;
+                    }
                 }
+            } else {
+                break;
             };
 
             // 清理单词，去除标点符号

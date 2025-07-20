@@ -280,37 +280,49 @@ fn check_repeated_words(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>
         if words[i] == words[i + 1] {
             // 找到第一个词的位置
             if let Some(first_word_pos) = find_whole_word(line, words[i]) {
-                // 找到第二个词的位置（从第一个词之后开始查找）
-                let after_first = &line[first_word_pos + words[i].len()..];
-                if let Some(second_pos) = find_whole_word(after_first, words[i]) {
-                    let second_word_pos = first_word_pos + words[i].len() + second_pos;
+                // 计算第一个词的结束位置（字符安全）
+                let first_word_end = first_word_pos + words[i].len();
 
-                    // 确保两个词之间只有空白字符
-                    let between_text = &line[first_word_pos + words[i].len()..second_word_pos];
-                    if between_text.trim().is_empty() {
-                        // 检查是否已经检测到这个位置的重复词
-                        let already_detected = detected_positions.iter().any(|&(start, end)| {
-                            (first_word_pos >= start && first_word_pos < end)
-                                || (second_word_pos >= start && second_word_pos < end)
-                        });
+                // 确保不会超出字符串边界
+                if first_word_end <= line.len() {
+                    // 找到第二个词的位置（从第一个词之后开始查找）
+                    let after_first = &line[first_word_end..];
+                    if let Some(second_pos) = find_whole_word(after_first, words[i]) {
+                        let second_word_pos = first_word_end + second_pos;
 
-                        if !already_detected {
-                            issues.push(TextIssue {
-                                line_number: line_idx + 1,
-                                start: byte_to_char_index(line, first_word_pos),
-                                end: byte_to_char_index(line, second_word_pos + words[i].len()),
-                                issue_type: "重复词".to_string(),
-                                message: format!("重复使用词语 '{}'", words[i]),
-                                suggestion: format!("删除重复的 '{}'", words[i]),
-                            });
+                        // 确保两个词之间只有空白字符
+                        if second_word_pos <= line.len() {
+                            let between_text = &line[first_word_end..second_word_pos];
+                            if between_text.trim().is_empty() {
+                                // 检查是否已经检测到这个位置的重复词
+                                let already_detected =
+                                    detected_positions.iter().any(|&(start, end)| {
+                                        (first_word_pos >= start && first_word_pos < end)
+                                            || (second_word_pos >= start && second_word_pos < end)
+                                    });
 
-                            // 记录已检测的位置
-                            detected_positions
-                                .push((first_word_pos, second_word_pos + words[i].len()));
+                                if !already_detected {
+                                    issues.push(TextIssue {
+                                        line_number: line_idx + 1,
+                                        start: byte_to_char_index(line, first_word_pos),
+                                        end: byte_to_char_index(
+                                            line,
+                                            second_word_pos + words[i].len(),
+                                        ),
+                                        issue_type: "重复词".to_string(),
+                                        message: format!("重复使用词语 '{}'", words[i]),
+                                        suggestion: format!("删除重复的 '{}'", words[i]),
+                                    });
 
-                            // Stop if we've found too many issues
-                            if issues.len() >= MAX_ISSUES {
-                                return;
+                                    // 记录已检测的位置
+                                    detected_positions
+                                        .push((first_word_pos, second_word_pos + words[i].len()));
+
+                                    // Stop if we've found too many issues
+                                    if issues.len() >= MAX_ISSUES {
+                                        return;
+                                    }
+                                }
                             }
                         }
                     }
@@ -322,30 +334,38 @@ fn check_repeated_words(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>
 
 // 查找完整单词的位置，确保不会匹配到单词的一部分
 fn find_whole_word(text: &str, word: &str) -> Option<usize> {
-    let mut start_idx = 0;
+    let mut search_start = 0;
 
-    while let Some(pos) = text[start_idx..].find(word) {
-        let actual_pos = start_idx + pos;
+    while search_start < text.len() {
+        // 使用字符安全的方式获取剩余文本
+        let remaining_text = &text[search_start..];
 
-        // 检查单词前后是否是单词边界（空格、标点符号等）
-        let is_start_boundary = actual_pos == 0
-            || !text
-                .chars()
-                .nth(actual_pos - 1)
-                .map_or(false, |c| c.is_alphanumeric());
+        if let Some(pos) = remaining_text.find(word) {
+            let actual_pos = search_start + pos;
 
-        let is_end_boundary = actual_pos + word.len() >= text.len()
-            || !text
-                .chars()
-                .nth(actual_pos + word.len())
-                .map_or(false, |c| c.is_alphanumeric());
+            // 检查单词前后是否是单词边界（空格、标点符号等）
+            let is_start_boundary = actual_pos == 0
+                || !text
+                    .chars()
+                    .nth(actual_pos.saturating_sub(1))
+                    .map_or(false, |c| c.is_alphanumeric());
 
-        if is_start_boundary && is_end_boundary {
-            return Some(actual_pos);
+            let word_end_pos = actual_pos + word.len();
+            let is_end_boundary = word_end_pos >= text.len()
+                || !text
+                    .chars()
+                    .nth(word_end_pos)
+                    .map_or(false, |c| c.is_alphanumeric());
+
+            if is_start_boundary && is_end_boundary {
+                return Some(actual_pos);
+            }
+
+            // 安全地移动到下一个字符位置
+            search_start = actual_pos + word.chars().next().map_or(1, |c| c.len_utf8());
+        } else {
+            break;
         }
-
-        // 继续查找下一个匹配
-        start_idx = actual_pos + 1;
     }
 
     None

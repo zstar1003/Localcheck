@@ -238,30 +238,38 @@ pub fn check_title_spelling(
 // 查找完整单词的位置，确保不会匹配到单词的一部分
 #[allow(dead_code)]
 fn find_whole_word(text: &str, word: &str) -> Option<usize> {
-    let mut start_idx = 0;
+    let mut search_start = 0;
 
-    while let Some(pos) = text[start_idx..].find(word) {
-        let actual_pos = start_idx + pos;
+    while search_start < text.len() {
+        // 使用字符安全的方式获取剩余文本
+        let remaining_text = &text[search_start..];
 
-        // 检查单词前后是否是单词边界（空格、标点符号等）
-        let is_start_boundary = actual_pos == 0
-            || !text
-                .chars()
-                .nth(actual_pos - 1)
-                .map_or(false, |c| c.is_alphanumeric());
+        if let Some(pos) = remaining_text.find(word) {
+            let actual_pos = search_start + pos;
 
-        let is_end_boundary = actual_pos + word.len() >= text.len()
-            || !text
-                .chars()
-                .nth(actual_pos + word.len())
-                .map_or(false, |c| c.is_alphanumeric());
+            // 检查单词前后是否是单词边界（空格、标点符号等）
+            let is_start_boundary = actual_pos == 0
+                || !text
+                    .chars()
+                    .nth(actual_pos.saturating_sub(1))
+                    .map_or(false, |c| c.is_alphanumeric());
 
-        if is_start_boundary && is_end_boundary {
-            return Some(actual_pos);
+            let word_end_pos = actual_pos + word.len();
+            let is_end_boundary = word_end_pos >= text.len()
+                || !text
+                    .chars()
+                    .nth(word_end_pos)
+                    .map_or(false, |c| c.is_alphanumeric());
+
+            if is_start_boundary && is_end_boundary {
+                return Some(actual_pos);
+            }
+
+            // 安全地移动到下一个字符位置
+            search_start = actual_pos + word.chars().next().map_or(1, |c| c.len_utf8());
+        } else {
+            break;
         }
-
-        // 继续查找下一个匹配
-        start_idx = actual_pos + 1;
     }
 
     None

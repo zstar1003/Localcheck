@@ -10,28 +10,36 @@ pub fn find_all_whole_words(text: &str, word: &str) -> Vec<usize> {
     let mut positions = Vec::new();
     let mut start_idx = 0;
 
-    while let Some(pos) = text[start_idx..].find(word) {
-        let actual_pos = start_idx + pos;
+    while start_idx < text.len() {
+        // 使用字符安全的方式获取剩余文本
+        let remaining_text = &text[start_idx..];
 
-        // 检查单词前后是否是单词边界（空格、标点符号等）
-        let is_start_boundary = actual_pos == 0
-            || !text
-                .chars()
-                .nth(actual_pos - 1)
-                .map_or(false, |c| c.is_alphanumeric());
+        if let Some(pos) = remaining_text.find(word) {
+            let actual_pos = start_idx + pos;
 
-        let is_end_boundary = actual_pos + word.len() >= text.len()
-            || !text
-                .chars()
-                .nth(actual_pos + word.len())
-                .map_or(false, |c| c.is_alphanumeric());
+            // 检查单词前后是否是单词边界（空格、标点符号等）
+            let is_start_boundary = actual_pos == 0
+                || !text
+                    .chars()
+                    .nth(actual_pos.saturating_sub(1))
+                    .map_or(false, |c| c.is_alphanumeric());
 
-        if is_start_boundary && is_end_boundary {
-            positions.push(actual_pos);
+            let word_end_pos = actual_pos + word.len();
+            let is_end_boundary = word_end_pos >= text.len()
+                || !text
+                    .chars()
+                    .nth(word_end_pos)
+                    .map_or(false, |c| c.is_alphanumeric());
+
+            if is_start_boundary && is_end_boundary {
+                positions.push(actual_pos);
+            }
+
+            // 安全地移动到下一个字符位置
+            start_idx = actual_pos + word.chars().next().map_or(1, |c| c.len_utf8());
+        } else {
+            break;
         }
-
-        // 继续查找下一个匹配
-        start_idx = actual_pos + 1;
     }
 
     positions
@@ -62,12 +70,8 @@ pub fn check_spelling(
     // 例如，如果已经检测到 "Corporate"，就不再检测 "corporate" 或 "CORPORATE"
     let mut line_detected_word_roots = HashSet::<String>::new();
 
-    // 首先，将行分割成单词（使用更精确的分割方法）
-    let words: Vec<&str> = line
-        .split_whitespace()
-        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric() && c != '\'' && c != '-'))
-        .filter(|w| !w.is_empty() && w.len() > 2 && !w.chars().all(|c| c.is_numeric()))
-        .collect();
+    // 首先，将行分割成单词（改进的分割方法，支持中英文混合）
+    let words = extract_words_from_line(line);
 
     // 加载词典
     let _dictionary_loaded = dictionary::load_dictionary();
@@ -75,8 +79,7 @@ pub fn check_spelling(
     // 检查每个完整单词
     for word in words {
         // 跳过已经检测到的错误（精确匹配）
-        if line_detected_errors.contains(word) || global_detected_words.contains(&word.to_string())
-        {
+        if line_detected_errors.contains(&word) || global_detected_words.contains(&word) {
             continue;
         }
 
@@ -89,9 +92,9 @@ pub fn check_spelling(
         }
 
         // 检查单词是否在拼写错误字典中
-        if let Some(correction) = spelling_dict::check_word_spelling(word) {
+        if let Some(correction) = spelling_dict::check_word_spelling(&word) {
             // 找到单词在原始行中的所有位置（确保是完整单词）
-            let positions = find_all_whole_words(line, word);
+            let positions = find_all_whole_words(line, &word);
 
             // 只报告第一个位置的错误，避免重复报告
             if let Some(pos) = positions.first() {
@@ -105,11 +108,11 @@ pub fn check_spelling(
                 });
 
                 // 添加到本行已检测集合
-                line_detected_errors.insert(word.to_string());
+                line_detected_errors.insert(word.clone());
                 line_detected_word_roots.insert(word_lower.clone());
 
                 // 添加到全局检测集合
-                global_detected_words.insert(word.to_string());
+                global_detected_words.insert(word.clone());
                 global_detected_words.insert(word_lower.clone());
 
                 // Stop if we've found too many issues
@@ -122,7 +125,7 @@ pub fn check_spelling(
 
         // 如果不在拼写错误字典中，检查是否在正确词典中
         // 如果不在正确词典中，可能是拼写错误
-        if !dictionary::is_word_in_dictionary(word) {
+        if !dictionary::is_word_in_dictionary(&word) {
             // 检查是否是带连字符的复合词（如 "out-degree"）
             if word.contains('-') {
                 // 直接跳过所有带连字符的词，这些通常是专业术语
@@ -144,7 +147,7 @@ pub fn check_spelling(
             }
 
             // 找到单词在原始行中的位置（确保是完整单词）
-            if let Some(pos) = find_whole_word(line, word) {
+            if let Some(pos) = find_whole_word(line, &word) {
                 // 检查是否是专有名词（首字母大写）
                 if word.chars().next().map_or(false, |c| c.is_uppercase()) {
                     // 专有名词可能是正确的，不标记为错误
@@ -161,7 +164,7 @@ pub fn check_spelling(
                 });
 
                 // 添加到本行已检测集合
-                line_detected_errors.insert(word.to_string());
+                line_detected_errors.insert(word.clone());
 
                 // Stop if we've found too many issues
                 if issues.len() >= MAX_ISSUES {
@@ -464,6 +467,52 @@ fn check_english_common_typos(
             }
         }
     }
+}
+
+// 从行中提取单词的函数，支持中英文混合文本
+fn extract_words_from_line(line: &str) -> Vec<String> {
+    let mut words = Vec::new();
+
+    // 检测语言类型
+    let language = detect_language_simple(line);
+
+    if language == "zh" {
+        // 对于中文文本，只提取英文单词进行拼写检查
+        // 中文字符不需要拼写检查
+        let mut current_word = String::new();
+
+        for c in line.chars() {
+            if c.is_ascii_alphabetic() || c == '\'' || c == '-' {
+                current_word.push(c);
+            } else {
+                if !current_word.is_empty()
+                    && current_word.len() > 2
+                    && !current_word.chars().all(|c| c.is_numeric())
+                {
+                    words.push(current_word.clone());
+                }
+                current_word.clear();
+            }
+        }
+
+        // 处理行末的单词
+        if !current_word.is_empty()
+            && current_word.len() > 2
+            && !current_word.chars().all(|c| c.is_numeric())
+        {
+            words.push(current_word);
+        }
+    } else {
+        // 对于英文文本，使用传统的空格分割方法
+        words = line
+            .split_whitespace()
+            .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric() && c != '\'' && c != '-'))
+            .filter(|w| !w.is_empty() && w.len() > 2 && !w.chars().all(|c| c.is_numeric()))
+            .map(|w| w.to_string())
+            .collect();
+    }
+
+    words
 }
 
 // 首字母大写的辅助函数
