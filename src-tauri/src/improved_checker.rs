@@ -366,36 +366,94 @@ fn detect_language_simple(text: &str) -> String {
     }
 }
 
-// 检查中文重复字符
+// 检查中文重复字符 - 改进版本，避免误报
 fn check_chinese_repeated_chars(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
+    // 常见的正常重复字符组合，不应该被标记为错误
+    let normal_repeats = [
+        "文文", "本本", "人人", "个个", "家家", "天天", "年年", "月月", "日日", "时时", "处处",
+        "事事", "样样", "种种", "步步", "层层", "点点", "面面", "线线", "片片", "块块", "条条",
+        "根根", "张张", "页页", "章章", "节节", "段段", "句句", "字字", "词词", "声声", "色色",
+        "形形", "式式", "类类", "项项", "件件", "套套", "组组", "批批", "群群", "队队", "班班",
+        "级级", "届届", "期期", "次次", "回回", "遍遍", "趟趟", "场场", "局局", "轮轮", "代代",
+        "世世", "辈辈", "头头", "只只", "匹匹", "尾尾",
+    ];
+
     let chars: Vec<char> = line.chars().collect();
     let mut i = 0;
+
     while i < chars.len().saturating_sub(1) {
         if chars[i] == chars[i + 1] && chars[i] >= '\u{4e00}' && chars[i] <= '\u{9fff}' {
-            let start_byte_pos = line.char_indices().nth(i).map(|(pos, _)| pos).unwrap_or(0);
-            let end_byte_pos = line
-                .char_indices()
-                .nth(i + 2)
-                .map(|(pos, _)| pos)
-                .unwrap_or_else(|| line.len());
+            // 检查是否是正常的重复组合
+            let repeated_pair = format!("{}{}", chars[i], chars[i]);
 
-            issues.push(TextIssue {
-                line_number: line_idx + 1,
-                start: byte_to_char_index(line, start_byte_pos),
-                end: byte_to_char_index(line, end_byte_pos),
-                issue_type: "重复字符".to_string(),
-                message: format!("重复字符: '{}{}'", chars[i], chars[i]),
-                suggestion: format!("删除重复的 '{}'", chars[i]),
-            });
-
-            i += 2;
-            if issues.len() >= MAX_ISSUES {
-                return;
+            // 如果是正常的重复组合，跳过
+            if normal_repeats.contains(&repeated_pair.as_str()) {
+                i += 2;
+                continue;
             }
+
+            // 检查上下文，避免误报词汇中的正常重复
+            let is_part_of_word = check_if_part_of_normal_word_improved(line, i, &chars);
+
+            if !is_part_of_word {
+                let start_byte_pos = line.char_indices().nth(i).map(|(pos, _)| pos).unwrap_or(0);
+                let end_byte_pos = line
+                    .char_indices()
+                    .nth(i + 2)
+                    .map(|(pos, _)| pos)
+                    .unwrap_or_else(|| line.len());
+
+                issues.push(TextIssue {
+                    line_number: line_idx + 1,
+                    start: byte_to_char_index(line, start_byte_pos),
+                    end: byte_to_char_index(line, end_byte_pos),
+                    issue_type: "重复字符".to_string(),
+                    message: format!("可能的重复字符: '{}{}'", chars[i], chars[i]),
+                    suggestion: format!("检查是否需要删除重复的 '{}'", chars[i]),
+                });
+
+                if issues.len() >= MAX_ISSUES {
+                    return;
+                }
+            }
+
+            i += 2; // Skip detected repeated characters
         } else {
             i += 1;
         }
     }
+}
+
+// 检查重复字符是否是正常词汇的一部分
+fn check_if_part_of_normal_word_improved(_line: &str, char_index: usize, chars: &[char]) -> bool {
+    // 检查前后是否有其他字符，形成更长的词汇
+    let has_prefix = char_index > 0
+        && (chars[char_index - 1].is_alphanumeric()
+            || (chars[char_index - 1] >= '\u{4e00}' && chars[char_index - 1] <= '\u{9fff}'));
+
+    let has_suffix = char_index + 2 < chars.len()
+        && (chars[char_index + 2].is_alphanumeric()
+            || (chars[char_index + 2] >= '\u{4e00}' && chars[char_index + 2] <= '\u{9fff}'));
+
+    // 如果重复字符前后都有其他字符，可能是正常词汇的一部分
+    if has_prefix && has_suffix {
+        return true;
+    }
+
+    // 检查是否在引号或特殊标点内，可能是引用或特殊用法
+    let context_start = char_index.saturating_sub(3);
+    let context_end = (char_index + 5).min(chars.len());
+
+    for i in context_start..context_end {
+        if i < chars.len() {
+            let c = chars[i];
+            if c == '"' || c == '"' || c == '"' || c == '\'' || c == '\u{2018}' || c == '\u{2019}' {
+                return true; // 在引号内，可能是正常用法
+            }
+        }
+    }
+
+    false
 }
 
 // 检查英文常见拼写错误
