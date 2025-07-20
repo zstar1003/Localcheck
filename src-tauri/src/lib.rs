@@ -22,6 +22,24 @@ const MAX_LINE_LENGTH: usize = 500; // Maximum line length to process
 const MAX_ISSUES: usize = 500; // Maximum number of issues to return
 const MAX_FILE_SIZE: u64 = 5_000_000; // Maximum file size (5MB)
 
+// UTF-8 safe string truncation
+fn truncate_string_safe(text: &str, max_chars: usize) -> &str {
+    if text.chars().count() <= max_chars {
+        return text;
+    }
+
+    let mut char_count = 0;
+    let mut byte_index = text.len();
+    for (i, _) in text.char_indices() {
+        if char_count >= max_chars {
+            byte_index = i;
+            break;
+        }
+        char_count += 1;
+    }
+    &text[0..byte_index]
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TextIssue {
     line_number: usize,
@@ -67,10 +85,10 @@ fn analyze_text(text: &str) -> AnalysisResult {
     let mut stats = HashMap::new();
     let mut truncated = false;
 
-    // Limit text size to prevent crashes
-    let text = if text.len() > MAX_TEXT_LENGTH {
+    // Limit text size to prevent crashes (UTF-8 safe)
+    let text = if text.chars().count() > MAX_TEXT_LENGTH {
         truncated = true;
-        &text[0..MAX_TEXT_LENGTH]
+        truncate_string_safe(text, MAX_TEXT_LENGTH)
     } else {
         text
     };
@@ -107,10 +125,10 @@ fn batch_spell_check(text: &str) -> AnalysisResult {
     let mut stats = HashMap::new();
     let mut truncated = false;
 
-    // Limit text size to prevent crashes
-    let text = if text.len() > MAX_TEXT_LENGTH {
+    // Limit text size to prevent crashes (UTF-8 safe)
+    let text = if text.chars().count() > MAX_TEXT_LENGTH {
         truncated = true;
-        &text[0..MAX_TEXT_LENGTH]
+        truncate_string_safe(text, MAX_TEXT_LENGTH)
     } else {
         text
     };
@@ -170,10 +188,10 @@ fn process_text_chunk(
             continue;
         }
 
-        // Limit line length to prevent excessive processing
-        let line = if line.len() > MAX_LINE_LENGTH {
+        // Limit line length to prevent excessive processing (UTF-8 safe)
+        let line = if line.chars().count() > MAX_LINE_LENGTH {
             *truncated = true;
-            &line[0..MAX_LINE_LENGTH]
+            truncate_string_safe(line, MAX_LINE_LENGTH)
         } else {
             line
         };
@@ -1184,9 +1202,9 @@ fn read_file_content(path: &str) -> Result<String, String> {
         }
     };
 
-    // If content is too large, truncate it
-    if content.len() > MAX_TEXT_LENGTH {
-        let truncated = content[0..MAX_TEXT_LENGTH].to_string();
+    // If content is too large, truncate it (UTF-8 safe)
+    if content.chars().count() > MAX_TEXT_LENGTH {
+        let truncated = truncate_string_safe(&content, MAX_TEXT_LENGTH).to_string();
         Ok(truncated)
     } else {
         Ok(content)
@@ -1372,12 +1390,12 @@ async fn perform_async_analysis(
     let mut stats = HashMap::new();
     let mut truncated = false;
 
-    // Limit text size to prevent crashes
-    let text = if text.len() > MAX_TEXT_LENGTH {
+    // Limit text size to prevent crashes (UTF-8 safe)
+    let text = if text.chars().count() > MAX_TEXT_LENGTH {
         truncated = true;
-        &text[0..MAX_TEXT_LENGTH]
+        truncate_string_safe(&text, MAX_TEXT_LENGTH).to_string()
     } else {
-        &text
+        text
     };
 
     // Calculate basic statistics
