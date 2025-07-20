@@ -71,7 +71,7 @@ pub fn check_chinese_punctuation(line: &str, line_idx: usize, issues: &mut Vec<T
         }
     }
 
-    // Check for unpaired brackets
+    // Check for unpaired Chinese brackets
     if line.contains("（") && !line.contains("）") {
         if let Some(pos) = line.find("（") {
             issues.push(TextIssue {
@@ -84,6 +84,9 @@ pub fn check_chinese_punctuation(line: &str, line_idx: usize, issues: &mut Vec<T
             });
         }
     }
+
+    // Check for English bracket issues
+    check_english_bracket_issues(line, line_idx, issues);
 }
 
 // Check for tense consistency in English
@@ -169,6 +172,89 @@ pub fn check_preposition_usage(line: &str, line_idx: usize, issues: &mut Vec<Tex
             if issues.len() >= MAX_ISSUES {
                 return;
             }
+        }
+    }
+}
+
+// Check for English bracket issues
+fn check_english_bracket_issues(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
+    // Skip if we've already found too many issues
+    if issues.len() >= MAX_ISSUES {
+        return;
+    }
+
+    // Check for empty parentheses ()
+    if let Some(pos) = line.find("()") {
+        issues.push(TextIssue {
+            line_number: line_idx + 1,
+            start: byte_to_char_index(line, pos),
+            end: byte_to_char_index(line, pos + 2),
+            issue_type: "标点符号".to_string(),
+            message: "空括号".to_string(),
+            suggestion: "删除空括号或添加内容".to_string(),
+        });
+
+        if issues.len() >= MAX_ISSUES {
+            return;
+        }
+    }
+
+    // Check for unpaired English brackets
+    let open_count = line.matches('(').count();
+    let close_count = line.matches(')').count();
+
+    if open_count != close_count {
+        if open_count > close_count {
+            // Missing closing bracket
+            if let Some(pos) = line.rfind('(') {
+                issues.push(TextIssue {
+                    line_number: line_idx + 1,
+                    start: byte_to_char_index(line, pos),
+                    end: byte_to_char_index(line, pos + 1),
+                    issue_type: "标点符号".to_string(),
+                    message: "括号不配对，缺少右括号".to_string(),
+                    suggestion: "添加右括号 )".to_string(),
+                });
+            }
+        } else {
+            // Missing opening bracket
+            if let Some(pos) = line.find(')') {
+                issues.push(TextIssue {
+                    line_number: line_idx + 1,
+                    start: byte_to_char_index(line, pos),
+                    end: byte_to_char_index(line, pos + 1),
+                    issue_type: "标点符号".to_string(),
+                    message: "括号不配对，缺少左括号".to_string(),
+                    suggestion: "添加左括号 (".to_string(),
+                });
+            }
+        }
+
+        if issues.len() >= MAX_ISSUES {
+            return;
+        }
+    }
+
+    // 移除括号前空格检测 - 在某些情况下括号前的空格是正常的
+
+    // Check for multiple consecutive spaces around brackets
+    let multiple_spaces_regex = match Regex::new(r"\s{2,}\(|\)\s{2,}") {
+        Ok(re) => re,
+        Err(_) => return,
+    };
+
+    for mat in multiple_spaces_regex.find_iter(line) {
+        issues.push(TextIssue {
+            line_number: line_idx + 1,
+            start: byte_to_char_index(line, mat.start()),
+            end: byte_to_char_index(line, mat.end()),
+            issue_type: "标点符号".to_string(),
+            message: "括号周围有多余空格".to_string(),
+            suggestion: "使用单个空格或删除多余空格".to_string(),
+        });
+
+        if issues.len() >= MAX_ISSUES {
+            return;
         }
     }
 }
