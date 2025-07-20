@@ -4,6 +4,8 @@ use crate::MAX_ISSUES;
 use std::collections::HashSet;
 
 // 检查标题和专有名词中的拼写错误
+// 这个函数已经被整合到 improved_checker.rs 中，保留以备将来参考
+#[allow(dead_code)]
 pub fn check_title_spelling(
     line: &str,
     line_idx: usize,
@@ -234,6 +236,7 @@ pub fn check_title_spelling(
 }
 
 // 查找完整单词的位置，确保不会匹配到单词的一部分
+#[allow(dead_code)]
 fn find_whole_word(text: &str, word: &str) -> Option<usize> {
     let mut start_idx = 0;
 

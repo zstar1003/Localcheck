@@ -191,29 +191,16 @@ fn process_text_chunk(
             break;
         }
 
-        // 使用改进的拼写检查器，解决单词切分不当和重复提示的问题
+        // 统一的拼写检查 - 只调用一个主要的拼写检查函数，避免重复检测
+        // 使用改进的拼写检查器，它已经包含了所有必要的拼写检查逻辑
         improved_checker::check_spelling(line, line_idx, issues, &mut global_detected_words);
         if issues.len() >= MAX_ISSUES {
             break;
         }
 
-        // 检查常见拼写错误
-        check_common_typos(
-            line,
-            line_idx,
-            issues,
-            &line_language,
-            &mut global_detected_words,
-        );
-        if issues.len() >= MAX_ISSUES {
-            break;
-        }
-
-        // 使用标题检查器检查标题中的拼写错误
-        title_checker::check_title_spelling(line, line_idx, issues, &mut global_detected_words);
-        if issues.len() >= MAX_ISSUES {
-            break;
-        }
+        // 注释掉其他拼写检查函数，避免重复检测
+        // check_common_typos 的功能已经整合到 improved_checker 中
+        // title_checker 的功能也已经整合到 improved_checker 中
 
         // Check grammar issues
         check_grammar_issues(line, line_idx, issues, &line_language);
@@ -544,6 +531,8 @@ fn check_redundant_expressions(
     }
 }
 
+// 这个函数已经被整合到 improved_checker.rs 中，保留以备将来参考
+#[allow(dead_code)]
 fn check_common_typos(
     line: &str,
     line_idx: usize,

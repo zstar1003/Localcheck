@@ -42,7 +42,7 @@ pub fn find_whole_word(text: &str, word: &str) -> Option<usize> {
     find_all_whole_words(text, word).into_iter().next()
 }
 
-// 改进的拼写检查函数，使用词典
+// 改进的拼写检查函数，统一处理所有拼写检查逻辑
 pub fn check_spelling(
     line: &str,
     line_idx: usize,
@@ -54,13 +54,13 @@ pub fn check_spelling(
         return;
     }
 
-    // 用于跟踪已经检测到的错误，避免重复提示
+    // 用于跟踪本行已经检测到的错误，避免重复提示
     // 使用小写形式作为键，确保不区分大小写
-    let mut detected_errors = HashSet::<String>::new();
+    let mut line_detected_errors = HashSet::<String>::new();
 
     // 用于跟踪已经检测到的错误词根，避免重复提示相同词根的不同形式
     // 例如，如果已经检测到 "Corporate"，就不再检测 "corporate" 或 "CORPORATE"
-    let mut detected_word_roots = HashSet::<String>::new();
+    let mut line_detected_word_roots = HashSet::<String>::new();
 
     // 首先，将行分割成单词（使用更精确的分割方法）
     let words: Vec<&str> = line
@@ -75,13 +75,15 @@ pub fn check_spelling(
     // 检查每个完整单词
     for word in words {
         // 跳过已经检测到的错误（精确匹配）
-        if detected_errors.contains(word) || global_detected_words.contains(&word.to_string()) {
+        if line_detected_errors.contains(word) || global_detected_words.contains(&word.to_string())
+        {
             continue;
         }
 
         // 跳过已经检测到的错误词根（不区分大小写）
         let word_lower = word.to_lowercase();
-        if detected_word_roots.contains(&word_lower) || global_detected_words.contains(&word_lower)
+        if line_detected_word_roots.contains(&word_lower)
+            || global_detected_words.contains(&word_lower)
         {
             continue;
         }
@@ -102,9 +104,9 @@ pub fn check_spelling(
                     suggestion: format!("建议修改为: '{}'", correction),
                 });
 
-                // 添加到已检测集合
-                detected_errors.insert(word.to_string());
-                detected_word_roots.insert(word_lower.clone());
+                // 添加到本行已检测集合
+                line_detected_errors.insert(word.to_string());
+                line_detected_word_roots.insert(word_lower.clone());
 
                 // 添加到全局检测集合
                 global_detected_words.insert(word.to_string());
@@ -158,8 +160,8 @@ pub fn check_spelling(
                     suggestion: "请检查拼写是否正确".to_string(),
                 });
 
-                // 添加到已检测集合
-                detected_errors.insert(word.to_string());
+                // 添加到本行已检测集合
+                line_detected_errors.insert(word.to_string());
 
                 // Stop if we've found too many issues
                 if issues.len() >= MAX_ISSUES {
@@ -169,13 +171,23 @@ pub fn check_spelling(
         }
     }
 
-    // 特别检查标题中的错误
+    // 特别检查标题中的错误和常见拼写错误
     check_title_errors(
         line,
         line_idx,
         issues,
-        &mut detected_errors,
-        &mut detected_word_roots,
+        &mut line_detected_errors,
+        &mut line_detected_word_roots,
+        global_detected_words,
+    );
+
+    // 检查常见拼写错误（整合原来的 check_common_typos 功能）
+    check_common_spelling_errors(
+        line,
+        line_idx,
+        issues,
+        &mut line_detected_errors,
+        &mut line_detected_word_roots,
         global_detected_words,
     );
 }
@@ -292,6 +304,162 @@ fn check_title_errors(
                     if issues.len() >= MAX_ISSUES {
                         return;
                     }
+                }
+            }
+        }
+    }
+}
+
+// 检查常见拼写错误（整合原来的 check_common_typos 功能）
+fn check_common_spelling_errors(
+    line: &str,
+    line_idx: usize,
+    issues: &mut Vec<TextIssue>,
+    detected_errors: &mut HashSet<String>,
+    detected_word_roots: &mut HashSet<String>,
+    global_detected_words: &mut HashSet<String>,
+) {
+    // Skip if we've already found too many issues
+    if issues.len() >= MAX_ISSUES {
+        return;
+    }
+
+    // 检测语言类型
+    let language = detect_language_simple(line);
+
+    if language == "zh" {
+        // 中文重复字符检测
+        check_chinese_repeated_chars(line, line_idx, issues);
+    } else {
+        // 英文常见拼写错误检测
+        check_english_common_typos(
+            line,
+            line_idx,
+            issues,
+            detected_errors,
+            detected_word_roots,
+            global_detected_words,
+        );
+    }
+}
+
+// 简单的语言检测
+fn detect_language_simple(text: &str) -> String {
+    let mut chinese_count = 0;
+    let mut english_count = 0;
+
+    for c in text.chars() {
+        if c >= '\u{4e00}' && c <= '\u{9fff}' {
+            chinese_count += 1;
+        } else if c.is_ascii_alphabetic() {
+            english_count += 1;
+        }
+    }
+
+    if chinese_count > english_count {
+        "zh".to_string()
+    } else {
+        "en".to_string()
+    }
+}
+
+// 检查中文重复字符
+fn check_chinese_repeated_chars(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>) {
+    let chars: Vec<char> = line.chars().collect();
+    let mut i = 0;
+    while i < chars.len().saturating_sub(1) {
+        if chars[i] == chars[i + 1] && chars[i] >= '\u{4e00}' && chars[i] <= '\u{9fff}' {
+            let start_byte_pos = line.char_indices().nth(i).map(|(pos, _)| pos).unwrap_or(0);
+            let end_byte_pos = line
+                .char_indices()
+                .nth(i + 2)
+                .map(|(pos, _)| pos)
+                .unwrap_or_else(|| line.len());
+
+            issues.push(TextIssue {
+                line_number: line_idx + 1,
+                start: byte_to_char_index(line, start_byte_pos),
+                end: byte_to_char_index(line, end_byte_pos),
+                issue_type: "重复字符".to_string(),
+                message: format!("重复字符: '{}{}'", chars[i], chars[i]),
+                suggestion: format!("删除重复的 '{}'", chars[i]),
+            });
+
+            i += 2;
+            if issues.len() >= MAX_ISSUES {
+                return;
+            }
+        } else {
+            i += 1;
+        }
+    }
+}
+
+// 检查英文常见拼写错误
+fn check_english_common_typos(
+    line: &str,
+    line_idx: usize,
+    issues: &mut Vec<TextIssue>,
+    detected_errors: &mut HashSet<String>,
+    detected_word_roots: &mut HashSet<String>,
+    global_detected_words: &mut HashSet<String>,
+) {
+    // Skip if we've already found too many issues
+    if issues.len() >= MAX_ISSUES {
+        return;
+    }
+
+    // 使用我们的拼写检查字典进行更全面的拼写检查
+    let words: Vec<&str> = line
+        .split(|c: char| !c.is_alphanumeric() && c != '\'')
+        .map(|w| w.trim())
+        .filter(|w| !w.is_empty())
+        .collect();
+
+    for word in words {
+        // 跳过太短的单词和纯数字
+        if word.len() <= 2 || word.chars().all(|c| c.is_numeric()) {
+            continue;
+        }
+
+        // 清理单词，去除可能的标点符号
+        let clean_word = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '\'');
+        if clean_word.is_empty() {
+            continue;
+        }
+
+        // 检查是否已经检测过这个单词
+        let clean_word_lower = clean_word.to_lowercase();
+        if detected_errors.contains(clean_word)
+            || detected_word_roots.contains(&clean_word_lower)
+            || global_detected_words.contains(&clean_word.to_string())
+            || global_detected_words.contains(&clean_word_lower)
+        {
+            continue;
+        }
+
+        // 检查单词是否在拼写错误字典中
+        if let Some(correction) = spelling_dict::check_word_spelling(clean_word) {
+            // 找到单词在原始行中的位置
+            if let Some(pos) = find_whole_word(line, clean_word) {
+                issues.push(TextIssue {
+                    line_number: line_idx + 1,
+                    start: byte_to_char_index(line, pos),
+                    end: byte_to_char_index(line, pos + clean_word.len()),
+                    issue_type: "拼写错误".to_string(),
+                    message: format!("可能的拼写错误: '{}'", clean_word),
+                    suggestion: format!("建议修改为: '{}'", correction),
+                });
+
+                // 添加到检测集合
+                detected_errors.insert(clean_word.to_string());
+                detected_word_roots.insert(clean_word_lower.clone());
+                global_detected_words.insert(clean_word.to_string());
+                global_detected_words.insert(clean_word_lower);
+
+                // Stop if we've found too many issues
+                if issues.len() >= MAX_ISSUES {
+                    return;
                 }
             }
         }
