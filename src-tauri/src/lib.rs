@@ -9,6 +9,7 @@ use std::time::Duration;
 
 // 导入拼写检查模块
 mod dictionary;
+mod document_parser;
 mod fix_functions;
 mod grammar_check;
 mod improved_checker;
@@ -1137,17 +1138,17 @@ fn check_article_usage(line: &str, line_idx: usize, issues: &mut Vec<TextIssue>)
     }
 }
 
-// Read file content with streaming approach for large files
+// Read file content with support for different document formats
 #[tauri::command]
 fn read_file_content(path: &str) -> Result<String, String> {
     // Check if file exists
-    let path = Path::new(path);
-    if !path.exists() {
-        return Err(format!("文件不存在: {}", path.display()));
+    let path_obj = Path::new(path);
+    if !path_obj.exists() {
+        return Err(format!("文件不存在: {}", path_obj.display()));
     }
 
     // Check file size
-    let metadata = match std::fs::metadata(path) {
+    let metadata = match std::fs::metadata(path_obj) {
         Ok(meta) => meta,
         Err(e) => return Err(format!("无法读取文件元数据: {}", e)),
     };
@@ -1160,18 +1161,35 @@ fn read_file_content(path: &str) -> Result<String, String> {
         ));
     }
 
-    // Read file content
-    match std::fs::read_to_string(path) {
-        Ok(content) => {
-            // If content is too large, truncate it
-            if content.len() > MAX_TEXT_LENGTH {
-                let truncated = content[0..MAX_TEXT_LENGTH].to_string();
-                Ok(truncated)
-            } else {
-                Ok(content)
+    // 检测文件类型并使用相应的解析器
+    let file_type = document_parser::detect_file_type(path);
+
+    let content = match file_type.as_str() {
+        "docx" | "doc" => {
+            // 使用文档解析器处理Word文档
+            document_parser::parse_document(path)?
+        }
+        _ => {
+            // 对于其他文件类型，尝试使用文档解析器（支持多种编码）
+            match document_parser::parse_document(path) {
+                Ok(content) => content,
+                Err(_) => {
+                    // 如果文档解析器失败，回退到原始方法
+                    match std::fs::read_to_string(path_obj) {
+                        Ok(content) => content,
+                        Err(e) => return Err(format!("读取文件失败: {}", e)),
+                    }
+                }
             }
         }
-        Err(e) => Err(format!("读取文件失败: {}", e)),
+    };
+
+    // If content is too large, truncate it
+    if content.len() > MAX_TEXT_LENGTH {
+        let truncated = content[0..MAX_TEXT_LENGTH].to_string();
+        Ok(truncated)
+    } else {
+        Ok(content)
     }
 }
 
@@ -1199,17 +1217,17 @@ fn detect_language(text: &str) -> String {
     }
 }
 
-// Process large file in chunks
+// Process large file in chunks with document format support
 #[tauri::command]
 fn analyze_large_file(path: &str) -> Result<AnalysisResult, String> {
     // Check if file exists
-    let path = Path::new(path);
-    if !path.exists() {
-        return Err(format!("文件不存在: {}", path.display()));
+    let path_obj = Path::new(path);
+    if !path_obj.exists() {
+        return Err(format!("文件不存在: {}", path_obj.display()));
     }
 
     // Check file size
-    let metadata = match std::fs::metadata(path) {
+    let metadata = match std::fs::metadata(path_obj) {
         Ok(meta) => meta,
         Err(e) => return Err(format!("无法读取文件元数据: {}", e)),
     };
@@ -1222,6 +1240,24 @@ fn analyze_large_file(path: &str) -> Result<AnalysisResult, String> {
         ));
     }
 
+    // 检测文件类型
+    let file_type = document_parser::detect_file_type(path);
+
+    match file_type.as_str() {
+        "docx" | "doc" => {
+            // 对于Word文档，先解析为文本再分析
+            let content = document_parser::parse_document(path)?;
+            Ok(analyze_text(&content))
+        }
+        _ => {
+            // 对于纯文本文件，使用流式读取
+            analyze_text_file_streaming(path_obj)
+        }
+    }
+}
+
+// 流式读取文本文件的辅助函数
+fn analyze_text_file_streaming(path: &Path) -> Result<AnalysisResult, String> {
     let file = match File::open(path) {
         Ok(file) => file,
         Err(e) => return Err(format!("无法打开文件: {}", e)),
