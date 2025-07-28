@@ -19,6 +19,8 @@ pub fn load_dictionary() -> &'static HashSet<String> {
             "../../English.dic",       // 上上级目录
             "./src-tauri/English.dic", // src-tauri 目录
             "./resources/English.dic", // resources 目录
+            "./_up_/English.dic", // _up_目录
+            "_up_/English.dic", // _up_目录
         ];
 
         for path in paths {
