@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(npm run dev)",
+      "Bash(npx kill-port:*)",
+      "Bash(taskkill:*)",
+      "Bash(mkdir:*)",
+      "Bash(cargo run:*)"
+    ],
+    "deny": []
+  }
+}

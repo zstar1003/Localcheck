@@ -1,0 +1,20 @@
+[package]
+name = "localcheck-build"
+version = "0.1.0"
+description = "本地校验器构建工具"
+authors = ["zstar"]
+edition = "2021"
+
+[workspace]
+members = ["src-tauri"]
+
+[[bin]]
+name = "frontend-build"
+path = "src/bin/frontend-build.rs"
+
+[[bin]]
+name = "frontend-dev"
+path = "src/bin/frontend-dev.rs"
+
+[dependencies]
+tokio = { version = "1.0", features = ["full"] }

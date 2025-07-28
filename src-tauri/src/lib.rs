@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-
 use std::time::Duration;
+use tauri::Emitter;
 
 // 导入拼写检查模块
 mod dictionary;
@@ -1427,6 +1427,8 @@ async fn perform_async_analysis(
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![
             analyze_text,
             analyze_text_async,
