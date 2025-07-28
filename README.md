@@ -62,6 +62,10 @@
 - **中英文混合**：正确处理中英文混合的文本
 - **编码支持**：支持 UTF-8、GBK、GB18030 等多种编码
 
+## 下载
+
+windows(x64)：https://github.com/zstar1003/Localcheck/releases/download/v0.1.0/Localcheck_0.1.0_x64-setup.exe
+
 ## 开发
 
 ### 环境要求
